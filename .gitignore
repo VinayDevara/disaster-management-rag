@@ -1,0 +1,28 @@
+# --- Security (Never Upload) ---
+.env
+.env.local
+
+# --- Python & System Artifacts ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# --- Virtual Environments ---
+venv/
+env/
+.venv/
+
+# --- Databases & Storage ---
+*.db
+*.sqlite3
+data/disaster_rag.db
+data/chromadb/
+
+# --- IDE Settings (Optional but Recommended) ---
+.vscode/
+.idea/
+
+# --- OS Generated Files ---
+.DS_Store
+Thumbs.db
