@@ -68,14 +68,6 @@ When correlating data:
     ) -> Dict[str, Any]:
         """
         Process results from multiple agents and generate consensus
-        
-        Args:
-            original_query: Original user query
-            agent_results: Dictionary of results from each agent
-            classification: Query classification info
-            
-        Returns:
-            Consensus analysis and unified response
         """
         print(f"🤝 Consensus Agent processing {len(agent_results)} agent results")
         
@@ -153,7 +145,7 @@ Be specific, actionable, and prioritize safety-critical information.
         }
     
     def _extract_key_data(self, agent_results: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract key data points from agent results"""
+        """Extract key data points from agent results with safe type conversion"""
         extracted = {
             "flights": [],
             "disasters": [],
@@ -171,21 +163,28 @@ Be specific, actionable, and prioritize safety-critical information.
                     if isinstance(data, list):
                         for item in data[:10]:  # Limit to top 10
                             if isinstance(item, dict):
+                                # Safe float conversion
+                                try:
+                                    lat = float(item.get("lat")) if item.get("lat") is not None else None
+                                    lon = float(item.get("lon")) if item.get("lon") is not None else None
+                                except (ValueError, TypeError):
+                                    lat, lon = None, None
+
                                 extracted["flights"].append({
-                                    "hex": item.get("hex"),
-                                    "flight": item.get("flight"),
-                                    "lat": item.get("lat"),
-                                    "lon": item.get("lon"),
+                                    "hex": item.get("hex") or item.get("aircraft__hex"),
+                                    "flight": item.get("flight") or item.get("aircraft__flight"),
+                                    "lat": lat,
+                                    "lon": lon,
                                     "altitude": item.get("alt_baro"),
                                     "emergency": item.get("emergency", "none")
                                 })
                                 
-                                if item.get("lat") and item.get("lon"):
+                                if lat is not None and lon is not None:
                                     extracted["coordinates"].append({
                                         "type": "flight",
-                                        "lat": item["lat"],
-                                        "lon": item["lon"],
-                                        "label": item.get("flight", item.get("hex"))
+                                        "lat": lat,
+                                        "lon": lon,
+                                        "label": item.get("flight") or item.get("hex")
                                     })
             
             elif agent_name == "disaster":
@@ -194,20 +193,27 @@ Be specific, actionable, and prioritize safety-critical information.
                     if isinstance(data, list):
                         for item in data[:10]:
                             if isinstance(item, dict):
+                                # Safe float conversion
+                                try:
+                                    lat = float(item.get("lat")) if item.get("lat") is not None else None
+                                    lon = float(item.get("lon")) if item.get("lon") is not None else None
+                                except (ValueError, TypeError):
+                                    lat, lon = None, None
+
                                 extracted["disasters"].append({
                                     "title": item.get("title"),
                                     "type": item.get("event_type"),
-                                    "lat": item.get("lat"),
-                                    "lon": item.get("lon"),
+                                    "lat": lat,
+                                    "lon": lon,
                                     "location": item.get("location_name")
                                 })
                                 
-                                if item.get("lat") and item.get("lon"):
+                                if lat is not None and lon is not None:
                                     extracted["coordinates"].append({
                                         "type": "disaster",
-                                        "lat": item["lat"],
-                                        "lon": item["lon"],
-                                        "label": item.get("title", item.get("event_type"))
+                                        "lat": lat,
+                                        "lon": lon,
+                                        "label": item.get("title") or item.get("event_type")
                                     })
             
             elif agent_name == "weather":
@@ -217,11 +223,18 @@ Be specific, actionable, and prioritize safety-critical information.
                         extracted["weather_conditions"].append(data)
                         
                         coords = data.get("coordinates", {})
-                        if coords.get("lat") and coords.get("lon"):
+                        # Safe float conversion
+                        try:
+                            lat = float(coords.get("lat")) if coords.get("lat") is not None else None
+                            lon = float(coords.get("lon")) if coords.get("lon") is not None else None
+                        except (ValueError, TypeError):
+                            lat, lon = None, None
+
+                        if lat is not None and lon is not None:
                             extracted["coordinates"].append({
                                 "type": "weather",
-                                "lat": coords["lat"],
-                                "lon": coords["lon"],
+                                "lat": lat,
+                                "lon": lon,
                                 "label": data.get("location", "Weather Station")
                             })
         
@@ -244,14 +257,14 @@ Be specific, actionable, and prioritize safety-critical information.
             flight_lat = flight.get("lat")
             flight_lon = flight.get("lon")
             
-            if not flight_lat or not flight_lon:
+            if flight_lat is None or flight_lon is None:
                 continue
             
             for disaster in extracted_data.get("disasters", []):
                 disaster_lat = disaster.get("lat")
                 disaster_lon = disaster.get("lon")
                 
-                if not disaster_lat or not disaster_lon:
+                if disaster_lat is None or disaster_lon is None:
                     continue
                 
                 distance = self._calculate_distance(
@@ -293,17 +306,20 @@ Be specific, actionable, and prioritize safety-critical information.
         """
         R = 6371  # Earth's radius in km
         
-        lat1_rad = math.radians(lat1)
-        lat2_rad = math.radians(lat2)
-        delta_lat = math.radians(lat2 - lat1)
-        delta_lon = math.radians(lon2 - lon1)
-        
-        a = (math.sin(delta_lat / 2) ** 2 +
-             math.cos(lat1_rad) * math.cos(lat2_rad) *
-             math.sin(delta_lon / 2) ** 2)
-        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-        
-        return R * c
+        try:
+            lat1_rad = math.radians(float(lat1))
+            lat2_rad = math.radians(float(lat2))
+            delta_lat = math.radians(float(lat2) - float(lat1))
+            delta_lon = math.radians(float(lon2) - float(lon1))
+            
+            a = (math.sin(delta_lat / 2) ** 2 +
+                 math.cos(lat1_rad) * math.cos(lat2_rad) *
+                 math.sin(delta_lon / 2) ** 2)
+            c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+            
+            return R * c
+        except Exception:
+            return 9999.0  # Return far distance on error
     
     def _analyze_geography(self, extracted_data: Dict[str, Any]) -> Dict[str, Any]:
         """Analyze geographic distribution of entities"""
@@ -313,8 +329,9 @@ Be specific, actionable, and prioritize safety-critical information.
             return {"status": "no_geographic_data"}
         
         # Calculate bounding box
-        lats = [c["lat"] for c in coordinates if c.get("lat")]
-        lons = [c["lon"] for c in coordinates if c.get("lon")]
+        # Ensure all values are floats to avoid TypeError
+        lats = [float(c["lat"]) for c in coordinates if c.get("lat") is not None]
+        lons = [float(c["lon"]) for c in coordinates if c.get("lon") is not None]
         
         if not lats or not lons:
             return {"status": "no_valid_coordinates"}
@@ -421,17 +438,17 @@ if __name__ == "__main__":
     db = DatabaseManager()
     agent = ConsensusAgent(db)
     
-    # Mock agent results
+    # Mock agent results with string coordinates (simulating the bug)
     mock_results = {
         "flight": {
-            "answer": "Found 5 flights in area",
-            "data_count": 5,
-            "tool_results": {"get_all_flights": []}
+            "answer": "Found flight",
+            "data_count": 1,
+            "tool_results": {"get_all_flights": [{"lat": 12.5, "lon": 75.5, "flight": "TEST01"}]}
         },
         "disaster": {
-            "answer": "Found 2 active wildfires",
-            "data_count": 2,
-            "tool_results": {"get_active_events": []}
+            "answer": "Found wildfire",
+            "data_count": 1,
+            "tool_results": {"get_active_events": [{"lat": "13.0", "lon": "75.0", "title": "Fire"}]}
         }
     }
     
@@ -440,5 +457,5 @@ if __name__ == "__main__":
         mock_results,
         {"query_type": "complex"}
     )
-    
+     
     print(json.dumps(result, indent=2, default=str))
