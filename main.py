@@ -745,6 +745,7 @@ from agents.flight_agent import FlightAgent
 from agents.weather_agent import WeatherAgent
 from agents.disaster_agent import DisasterAgent
 from agents.consensus_agent import ConsensusAgent
+from utils.metrics import MetricsTracker
 
 # Initialize colorama
 init(autoreset=True)
@@ -756,7 +757,8 @@ app = FastAPI(title="Disaster RAG Backend", version="1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["http://localhost:3000",
+    "http://127.0.0.1:3000",],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -794,6 +796,9 @@ class DisasterRAGSystem:
 
         print(f"{Fore.YELLOW}🤝 Initializing consensus agent...")
         self.consensus_agent = ConsensusAgent(self.db)
+        
+        # Initialize metrics tracker
+        self.metrics_tracker = MetricsTracker()
 
         print(f"\n{Fore.GREEN}✅ System initialized successfully!\n")
 
@@ -841,6 +846,23 @@ class DisasterRAGSystem:
             final_response = agent_results.get(primary_agent, {})
 
         execution_time = (datetime.now() - start_time).total_seconds()
+        
+        # Record metrics
+        # Determine category based on classification
+        # Categories: Flight, Weather, Disaster, Cross-Domain
+        category = "Unknown"
+        if requires_consensus:
+            category = "Cross-Domain"
+        else:
+            primary = routing_plan["classification"]["primary_agent"]
+            if "flight" in primary.lower():
+                category = "Flight"
+            elif "weather" in primary.lower():
+                category = "Weather"
+            elif "disaster" in primary.lower():
+                category = "Disaster"
+        
+        self.metrics_tracker.record_query(category, execution_time)
 
         return {
             "query": query,
@@ -904,6 +926,12 @@ class DisasterRAGSystem:
                 if user_input.lower() == "load data":
                     self.load_adsb_data()
                     self.load_disaster_data()
+                    continue
+                
+                if user_input.lower() == "metrics":
+                    print(f"\n{Fore.CYAN}📊 Query Performance Metrics:{Style.RESET_ALL}")
+                    stats = self.metrics_tracker.get_summary()
+                    print(json.dumps(stats, indent=2))
                     continue
 
                 result = self.process_query(user_input)

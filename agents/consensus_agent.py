@@ -71,20 +71,21 @@ When correlating data:
         """
         print(f"🤝 Consensus Agent processing {len(agent_results)} agent results")
         
-        # Extract key data points from each agent
-        extracted_data = self._extract_key_data(agent_results)
-        
-        # Perform correlation analysis
-        correlations = self._find_correlations(extracted_data, agent_results)
-        
-        # Calculate geographic relationships
-        geographic_analysis = self._analyze_geography(extracted_data)
-        
-        # Assess overall situation severity
-        severity_assessment = self._assess_severity(agent_results, correlations)
-        
-        # Generate unified response using LLM
-        consensus_prompt = f"""Synthesize the following information into a comprehensive response.
+        try:
+            # Extract key data points from each agent
+            extracted_data = self._extract_key_data(agent_results)
+            
+            # Perform correlation analysis
+            correlations = self._find_correlations(extracted_data, agent_results)
+            
+            # Calculate geographic relationships
+            geographic_analysis = self._analyze_geography(extracted_data)
+            
+            # Assess overall situation severity
+            severity_assessment = self._assess_severity(agent_results, correlations)
+            
+            # Generate unified response using LLM
+            consensus_prompt = f"""Synthesize the following information into a comprehensive response.
 
 Original Query: {original_query}
 
@@ -120,28 +121,74 @@ Structure your response clearly with sections for:
 
 Be specific, actionable, and prioritize safety-critical information.
 """
+            
+            unified_response = self.llm.generate(
+                prompt=consensus_prompt,
+                system_prompt=self.system_prompt,
+                temperature=0.7
+            )
+            
+            return {
+                "query": original_query,
+                "agent_results_summary": {
+                    agent: {
+                        "data_count": result.get("data_count", 0),
+                        "status": "success" if "answer" in result else "error"
+                    }
+                    for agent, result in agent_results.items()
+                },
+                "extracted_data": extracted_data,
+                "correlations": correlations,
+                "geographic_analysis": geographic_analysis,
+                "severity_assessment": severity_assessment,
+                "unified_response": unified_response,
+                "confidence": self._calculate_confidence(agent_results, correlations),
+                "status": "success"
+            }
+            
+        except Exception as e:
+            print(f"⚠️ Consensus generation failed: {str(e)}")
+            return self._generate_fallback_response(original_query, agent_results, str(e))
+
+    def _generate_fallback_response(
+        self,
+        original_query: str,
+        agent_results: Dict[str, Any],
+        error_message: str
+    ) -> Dict[str, Any]:
+        """Generate a fallback response by concatenating agent results"""
+        print("🔄 Generating fallback response...")
         
-        unified_response = self.llm.generate(
-            prompt=consensus_prompt,
-            system_prompt=self.system_prompt,
-            temperature=0.7
-        )
+        fallback_parts = []
+        fallback_parts.append(f"**Note:** Comprehensive analysis is currently unavailable due to a system error ({error_message}). Below are the raw findings from specialized agents.\n")
+        
+        for agent_name, result in agent_results.items():
+            fallback_parts.append(f"### {agent_name.capitalize()} Agent Findings")
+            if "answer" in result:
+                fallback_parts.append(result["answer"])
+            else:
+                fallback_parts.append("No specific findings reported.")
+            fallback_parts.append("") # Empty line for spacing
+            
+        unified_response = "\n".join(fallback_parts)
         
         return {
             "query": original_query,
             "agent_results_summary": {
                 agent: {
                     "data_count": result.get("data_count", 0),
-                    "status": "success" if "answer" in result else "error"
+                    "status": "fallback"
                 }
                 for agent, result in agent_results.items()
             },
-            "extracted_data": extracted_data,
-            "correlations": correlations,
-            "geographic_analysis": geographic_analysis,
-            "severity_assessment": severity_assessment,
+            "extracted_data": {},
+            "correlations": [],
+            "geographic_analysis": {},
+            "severity_assessment": {"level": "unknown", "score": 0},
             "unified_response": unified_response,
-            "confidence": self._calculate_confidence(agent_results, correlations)
+            "confidence": 0.5, # Lower confidence for fallback
+            "status": "fallback",
+            "error": error_message
         }
     
     def _extract_key_data(self, agent_results: Dict[str, Any]) -> Dict[str, Any]:
