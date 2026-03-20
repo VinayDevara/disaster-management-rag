@@ -9,6 +9,44 @@ from utils.vector_db import VectorDBManager
 from tools.sql_tool import DisasterSQLTool
 from tools.api_tool import DisasterAPITool
 import json
+import dspy
+from pydantic import BaseModel, Field
+
+class DisasterToolSelection(BaseModel):
+    selected_tools: list[str] = Field(description="List of tools to use")
+    parameters: dict = Field(description="Parameters for each tool, e.g. {'get_events_in_area': {'lat_min': 10, 'limit': 20}}. You MUST analyze the query and explicitly provide dynamic values for integers like 'limit' (e.g., 50 for broad queries, 5 for specific) or 'days' rather than letting the system use arbitrary defaults.")
+    reasoning: str = Field(description="Explanation for tool selection and dynamic parameter choices")
+    needs_realtime: bool = Field(description="Whether real-time data is needed", default=True)
+
+class SelectDisasterTools(dspy.Signature):
+    """Analyze a disaster query and determine which tools to use for an Evacuation & Logistics Agent.
+    
+    Tools:
+    1. get_active_events - Current active disasters
+    2. get_events_by_category - Disasters by type
+    3. get_events_in_area - Disasters in geographic bounding box
+    4. get_event_details - Detailed info
+    5. get_disaster_events_by_type - Historical disasters
+    6. get_recent_disasters - Recent disasters
+    7. vector_search - Semantic search
+    """
+    query: str = dspy.InputField()
+    context: str = dspy.InputField()
+    extracted_disaster_types: str = dspy.InputField()
+    extracted_locations: str = dspy.InputField()
+    output: DisasterToolSelection = dspy.OutputField()
+
+class GenerateDisasterResponse(dspy.Signature):
+    """Generate a comprehensive Evacuation & Logistics assessment based on disaster data. Include:
+1. Summary of relevant disaster events & Locations
+2. Urban Evacuation Plans
+3. Comprehensive emergency logistics planning
+4. Severity and Aviation/operational implications
+"""
+    query: str = dspy.InputField()
+    disaster_data: str = dspy.InputField(desc="JSON string of tool findings")
+    impact_analysis: str = dspy.InputField(desc="JSON string of impact analysis")
+    response: str = dspy.OutputField()
 
 class DisasterAgent:
     """
@@ -28,55 +66,22 @@ class DisasterAgent:
         self.vector_db = vector_db
         self.sql_tool = DisasterSQLTool(db_manager)
         self.api_tool = DisasterAPITool()
+        self.tool_predictor = dspy.Predict(SelectDisasterTools)
+        self.response_predictor = dspy.ChainOfThought(GenerateDisasterResponse)
         
-        self.system_prompt = """You are a Disaster Management Specialist Agent.
+        self.system_prompt = """You are an Evacuation & Logistics Agent for disaster management.
 
 Your capabilities:
-1. Monitor active natural disaster events globally
-2. Analyze disaster impact zones and severity
-3. Track wildfires, earthquakes, floods, storms, volcanoes
-4. Correlate disasters with aviation operations
-5. Provide emergency response assessments
-
-Available tools:
-- get_active_events(): Get currently active disasters (NASA EONET)
-- get_events_by_category(category): Get disasters by type
-- get_events_in_area(lat_min, lat_max, lon_min, lon_max): Query geographic area
-- get_event_details(event_id): Get detailed event information
-- get_disaster_events_by_type(type): Query historical data
-- get_recent_disasters(days): Get recent disaster events
-- vector_search(query): Semantic search disaster data
-
-Disaster categories:
-- Wildfires
-- Earthquakes  
-- Floods
-- Storms (hurricanes, cyclones, typhoons)
-- Volcanoes
-- Landslides
-- Drought
-- Severe Weather
+1. Rapid generation of authenticated urban evacuation plans.
+2. Comprehensive emergency logistics planning.
+3. Analyze disaster impact zones and severity.
+4. Correlate disasters with aviation operations.
 
 Severity assessment factors:
-- Geographic extent
-- Population affected
-- Infrastructure impact
-- Aviation disruption potential
-- Emergency response requirements
-
-Guidelines:
-- Provide accurate geographic coordinates
-- Include event timelines
-- Assess operational impact
-- Flag events affecting flight paths
-- Consider cascading effects
-
-When responding:
-1. Identify relevant disaster events
-2. Assess severity and impact area
-3. Provide geographic context
-4. Analyze aviation/operational implications
-5. Include source references and timestamps
+- Geographic extent and population affected.
+- Infrastructure impact and logistics.
+- Evacuation route viability.
+- Aviation disruption potential.
 """
     
     def process(self, query: str, context: Optional[Dict] = None) -> Dict[str, Any]:
@@ -98,46 +103,16 @@ When responding:
         locations = entities.get("locations", [])
         
         # Determine tools to use
-        tool_selection_prompt = f"""Analyze this disaster query and determine which tools to use.
-
-Query: {query}
-
-Context: {json.dumps(context) if context else 'None'}
-
-Extracted disaster types: {disaster_types}
-Extracted locations: {locations}
-
-Available tools:
-1. get_active_events - Current active disasters worldwide
-2. get_events_by_category - Disasters by type (wildfires, earthquakes, etc.)
-3. get_events_in_area - Disasters in geographic bounding box
-4. get_event_details - Detailed info about specific event
-5. get_disaster_events_by_type - Historical disasters by type
-6. get_recent_disasters - Recent disasters (last N days)
-7. vector_search - Semantic search
-
-Return JSON:
-{{
-  "selected_tools": ["tool_name"],
-  "parameters": {{"tool_name": {{"param": "value"}}}},
-  "reasoning": "Explanation",
-  "needs_realtime": true/false
-}}
-
-If query asks about "current" or "active" disasters, use API tools (get_active_events).
-For historical analysis, use database tools.
-"""
-        
-        tool_decision = self.llm.generate(
-            prompt=tool_selection_prompt,
-            system_prompt=self.system_prompt,
-            json_mode=True,
-            temperature=0.3
-        )
-        
         try:
-            decision = json.loads(tool_decision)
-        except:
+            result = self.tool_predictor(
+                query=query,
+                context=json.dumps(context) if context else 'None',
+                extracted_disaster_types=str(disaster_types),
+                extracted_locations=str(locations)
+            )
+            decision = result.output.model_dump() if hasattr(result.output, 'model_dump') else result.output.dict()
+        except Exception as e:
+            print(f"⚠️ DSPy tool selection failed: {e}")
             decision = {
                 "selected_tools": ["get_active_events"],
                 "parameters": {},
@@ -152,32 +127,37 @@ For historical analysis, use database tools.
             
             try:
                 if tool_name == "get_active_events":
-                    limit = params.get("limit", 100)
-                    tool_results[tool_name] = self.api_tool.get_active_events(limit)
+                    tool_results[tool_name] = self.api_tool.get_active_events(params.get("limit"))
                 
                 elif tool_name == "get_events_by_category":
-                    category = params.get("category", "wildfires")
-                    tool_results[tool_name] = self.api_tool.get_events_by_category(category)
+                    tool_results[tool_name] = self.api_tool.get_events_by_category(
+                        params.get("category"),
+                        params.get("limit")
+                    )
                 
                 elif tool_name == "get_events_in_area":
                     tool_results[tool_name] = self.api_tool.get_events_in_area(
                         params.get("lat_min", 0),
                         params.get("lat_max", 0),
                         params.get("lon_min", 0),
-                        params.get("lon_max", 0)
+                        params.get("lon_max", 0),
+                        params.get("limit")
                     )
                 
                 elif tool_name == "get_event_details":
-                    event_id = params.get("event_id", "")
-                    tool_results[tool_name] = self.api_tool.get_event_details(event_id)
+                    tool_results[tool_name] = self.api_tool.get_event_details(params.get("event_id"))
                 
                 elif tool_name == "get_disaster_events_by_type":
-                    event_type = params.get("type", "")
-                    tool_results[tool_name] = self.sql_tool.get_disaster_events_by_type(event_type)
+                    tool_results[tool_name] = self.sql_tool.get_disaster_events_by_type(
+                        params.get("type"),
+                        params.get("limit")
+                    )
                 
                 elif tool_name == "get_recent_disasters":
-                    days = params.get("days", 30)
-                    tool_results[tool_name] = self.sql_tool.get_recent_disasters(days)
+                    tool_results[tool_name] = self.sql_tool.get_recent_disasters(
+                        params.get("days"),
+                        params.get("limit")
+                    )
                 
                 elif tool_name == "vector_search":
                     search_query = params.get("query", query)
@@ -194,34 +174,16 @@ For historical analysis, use database tools.
         impact_analysis = self._analyze_impact(tool_results)
         
         # Generate response
-        response_prompt = f"""Based on the query and disaster data, provide a comprehensive assessment.
-
-Query: {query}
-
-Disaster Data:
-{json.dumps(tool_results, indent=2, default=str)}
-
-Impact Analysis:
-{json.dumps(impact_analysis, indent=2)}
-
-Provide:
-1. Summary of relevant disaster events
-2. Geographic locations and coordinates
-3. Event timelines and current status
-4. Severity and impact assessment
-5. Aviation/operational implications
-6. Affected areas and populations
-7. Emergency response considerations
-
-Include specific event IDs, coordinates, and source references.
-Prioritize events by severity and relevance to query.
-"""
-        
-        final_answer = self.llm.generate(
-            prompt=response_prompt,
-            system_prompt=self.system_prompt,
-            temperature=0.7
-        )
+        try:
+            result = self.response_predictor(
+                query=query,
+                disaster_data=json.dumps(tool_results, default=str),
+                impact_analysis=json.dumps(impact_analysis)
+            )
+            final_answer = result.response
+        except Exception as e:
+            print(f"⚠️ DSPy response generation failed: {e}")
+            final_answer = f"Error generating response: {e}\n\nRaw Data:\n{json.dumps(impact_analysis)}"
         
         return {
             "agent": "disaster",

@@ -52,7 +52,7 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+      <div className="flex items-center justify-center min-h-screen bg-white dark:bg-gradient-to-br dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
         <div className="animate-spin">
           <svg className="w-12 h-12 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" opacity="0.3" />
@@ -64,7 +64,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-foreground">
+    <div className="min-h-screen bg-white dark:bg-gradient-to-br dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 text-foreground">
       <TopNavigation 
         onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
         onOpenChat={handleOpenChat}
@@ -85,7 +85,7 @@ export default function DashboardPage() {
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
             {/* Disaster Status Overview */}
             <section>
-              <h1 className="text-3xl font-bold mb-6 bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
+              <h1 className="text-3xl font-bold mb-6 bg-gradient-to-r from-blue-500 to-cyan-500 dark:from-blue-400 dark:to-cyan-400 bg-clip-text text-transparent">
                 Disaster Management Dashboard
               </h1>
               <DisasterStatusOverview />
@@ -93,13 +93,13 @@ export default function DashboardPage() {
 
             {/* Advanced Visualizations */}
             <section>
-              <h2 className="text-2xl font-bold mb-6 text-gray-100">Analytics & Insights</h2>
+              <h2 className="text-2xl font-bold mb-6 text-gray-900 dark:text-gray-100">Analytics & Insights</h2>
               <AdvancedVisualizations />
             </section>
 
             {/* Chat Interface */}
             <section>
-              <h2 className="text-2xl font-bold mb-6 text-gray-100">AI Disaster Assistant</h2>
+              <h2 className="text-2xl font-bold mb-6 text-gray-900 dark:text-gray-100">AI Disaster Assistant</h2>
               <ChatInterface 
                 user={user} 
                 sessionId={selectedSessionId}

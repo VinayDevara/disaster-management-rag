@@ -7,6 +7,17 @@ from utils.llm_client import get_llm_client
 from utils.database import DatabaseManager
 import json
 import math
+import dspy
+
+class GenerateEmergencyCommandPlan(dspy.Signature):
+    """Synthesize information from specialized agents to generate a comprehensive disaster action plan."""
+    original_query: str = dspy.InputField()
+    agent_results: str = dspy.InputField()
+    extracted_key_data: str = dspy.InputField()
+    correlations_found: str = dspy.InputField()
+    geographic_analysis: str = dspy.InputField()
+    severity_assessment: str = dspy.InputField()
+    response: str = dspy.OutputField(desc="""1. Executive Summary\n2. Cross-Domain Analysis\n3. Detailed Findings\n4. Geographic Context\n5. Recommendations & Logistics (crucial for outages/unverified reports)""")
 
 class ConsensusAgent:
     """
@@ -20,44 +31,23 @@ class ConsensusAgent:
     def __init__(self, db_manager: DatabaseManager):
         self.llm = get_llm_client()
         self.db = db_manager
+        self.response_predictor = dspy.ChainOfThought(GenerateEmergencyCommandPlan)
         
-        self.system_prompt = """You are a Consensus Agent for disaster management cross-intelligence.
+        self.system_prompt = """You are an Emergency Command Agent for disaster management.
 
 Your role is to:
-1. Synthesize information from multiple specialized agents
-2. Identify correlations between flight, weather, and disaster data
-3. Detect patterns and causal relationships
-4. Generate comprehensive, unified responses
-5. Prioritize critical information
-
-Cross-Intelligence Capabilities:
-- Flight-Disaster Correlation: Identify flights affected by disasters
-- Weather-Flight Correlation: Assess weather impact on aviation
-- Weather-Disaster Correlation: Link weather patterns to disasters
-- Geographic Correlation: Find spatial relationships
-- Temporal Correlation: Identify time-based patterns
-
-Analysis Priorities:
-1. Safety-critical information (emergencies, severe weather, disasters)
-2. Operational impact (flight diversions, delays, closures)
-3. Geographic proximity (distance between entities)
-4. Temporal relevance (current vs. historical)
-5. Causality (weather causing disasters affecting flights)
+1. Synthesize information from multiple specialized agents.
+2. Handle partially verified reports from citizens and field responders.
+3. Assume operation despite possible communication outages in coastal/disaster scenarios.
+4. Generate comprehensive disaster action plans based on inputs from the other three agents.
+5. Prioritize critical information and cross-domain intelligence.
 
 Response Structure:
-1. Executive Summary: Key findings and critical alerts
-2. Cross-Domain Analysis: Correlations and relationships
-3. Detailed Findings: Information from each domain
-4. Geographic Context: Locations, coordinates, maps
-5. Recommendations: Actionable insights
-6. Sources: Data provenance and timestamps
-
-When correlating data:
-- Calculate geographic distances between entities
-- Assess temporal overlaps
-- Identify causal chains
-- Quantify risk levels
-- Provide confidence scores for correlations
+1. Executive Summary: Key findings and critical alerts.
+2. Cross-Domain Analysis: Correlations and relationships.
+3. Emergency Action Plan: Coherent multi-agent response.
+4. Geographic Context: Locations, coordinates, maps.
+5. Command Recommendations: Actionable insights.
 """
     
     def process(
@@ -84,49 +74,20 @@ When correlating data:
             # Assess overall situation severity
             severity_assessment = self._assess_severity(agent_results, correlations)
             
-            # Generate unified response using LLM
-            consensus_prompt = f"""Synthesize the following information into a comprehensive response.
-
-Original Query: {original_query}
-
-Agent Results:
-{json.dumps(agent_results, indent=2, default=str)}
-
-Extracted Key Data:
-{json.dumps(extracted_data, indent=2, default=str)}
-
-Correlations Found:
-{json.dumps(correlations, indent=2, default=str)}
-
-Geographic Analysis:
-{json.dumps(geographic_analysis, indent=2, default=str)}
-
-Severity Assessment:
-{json.dumps(severity_assessment, indent=2)}
-
-Generate a comprehensive response that:
-1. Directly answers the original query
-2. Highlights critical safety information
-3. Explains relevant correlations between domains
-4. Provides geographic context with coordinates
-5. Includes operational recommendations
-6. Cites specific data points and sources
-
-Structure your response clearly with sections for:
-- Executive Summary
-- Detailed Analysis
-- Geographic Context
-- Correlations and Insights
-- Recommendations
-
-Be specific, actionable, and prioritize safety-critical information.
-"""
-            
-            unified_response = self.llm.generate(
-                prompt=consensus_prompt,
-                system_prompt=self.system_prompt,
-                temperature=0.7
-            )
+            # Generate unified response using DSPy
+            try:
+                result = self.response_predictor(
+                    original_query=original_query,
+                    agent_results=json.dumps(agent_results, indent=2, default=str),
+                    extracted_key_data=json.dumps(extracted_data, indent=2, default=str),
+                    correlations_found=json.dumps(correlations, indent=2, default=str),
+                    geographic_analysis=json.dumps(geographic_analysis, indent=2, default=str),
+                    severity_assessment=json.dumps(severity_assessment, indent=2)
+                )
+                unified_response = result.response
+            except Exception as e:
+                print(f"⚠️ DSPy unified response generation failed: {e}")
+                unified_response = f"Error generating unified emergency plan: {e}"
             
             return {
                 "query": original_query,

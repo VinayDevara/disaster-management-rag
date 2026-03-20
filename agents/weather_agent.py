@@ -9,6 +9,37 @@ from utils.vector_db import VectorDBManager
 from tools.sql_tool import WeatherSQLTool
 from tools.api_tool import WeatherAPITool
 import json
+import dspy
+from pydantic import BaseModel, Field
+
+class WeatherToolSelection(BaseModel):
+    selected_tools: list[str] = Field(description="List of tools to use")
+    parameters: dict = Field(description="Parameters for each tool. You MUST analyze the query and explicitly provide dynamic values for integers like 'limit' (e.g., 50 for broad queries, 5 for specific) or 'days' rather than letting the system use arbitrary defaults.")
+    reasoning: str = Field(description="Why these tools and specific dynamic parameters were selected")
+
+class SelectWeatherTools(dspy.Signature):
+    """Analyze a weather query and determine which tools to use for an Environment & Maritime Agent.
+    
+    Tools:
+    1. get_current_weather
+    2. get_weather_by_city
+    3. get_forecast
+    4. get_weather_events_by_type
+    5. get_weather_events_in_area
+    6. vector_search
+    """
+    query: str = dspy.InputField()
+    context: str = dspy.InputField()
+    extracted_locations: str = dspy.InputField()
+    extracted_coordinates: str = dspy.InputField()
+    output: WeatherToolSelection = dspy.OutputField()
+
+class GenerateWeatherResponse(dspy.Signature):
+    """Generate a comprehensive meteorological and maritime assessment based on weather data."""
+    query: str = dspy.InputField()
+    weather_data: str = dspy.InputField()
+    severity_analysis: str = dspy.InputField()
+    response: str = dspy.OutputField(desc="""1. Conditions/forecast\n2. Temperature\n3. Wind/visibility/maritime state\n4. Aviation impact\n5. Warnings""")
 
 class WeatherAgent:
     """
@@ -28,44 +59,23 @@ class WeatherAgent:
         self.vector_db = vector_db
         self.sql_tool = WeatherSQLTool(db_manager)
         self.api_tool = WeatherAPITool()
+        self.tool_predictor = dspy.Predict(SelectWeatherTools)
+        self.response_predictor = dspy.ChainOfThought(GenerateWeatherResponse)
         
-        self.system_prompt = """You are a Weather Analysis Specialist Agent for disaster management.
+        self.system_prompt = """You are an Environment & Maritime Agent for disaster management.
 
 Your capabilities:
-1. Retrieve real-time weather data for any location
-2. Analyze weather patterns and forecasts
-3. Identify severe weather conditions
-4. Correlate weather with flight operations and disasters
-5. Provide meteorological assessments
-
-Available tools:
-- get_current_weather(lat, lon): Get current weather at coordinates
-- get_weather_by_city(city, country_code): Get weather for city
-- get_forecast(lat, lon, days): Get weather forecast
-- get_weather_events_by_type(type): Query historical weather events
-- get_weather_events_in_area(lat_min, lat_max, lon_min, lon_max): Query events in area
-- vector_search(query): Semantic search weather data
-
-Weather severity assessment:
-- Wind speed > 50 km/h: High wind warning
-- Visibility < 1000m: Low visibility warning
-- Temperature extremes: < -20°C or > 40°C
-- Storms, thunderstorms, heavy rain: Flight hazards
-- Snow, ice: Ground operations impact
+1. Retrieve real-time weather data for any location.
+2. Analyze weather patterns, forecasts, and maritime conditions (e.g., cyclones, tidal surges).
+3. Identify severe weather conditions.
+4. Correlate weather with flight operations and disasters.
 
 Guidelines:
 - Provide temperature in Celsius and Fahrenheit
-- Include wind speed and direction
-- Flag conditions hazardous for aviation
+- Include wind speed and direction, focusing on maritime severity
+- Flag conditions hazardous for aviation or coastal regions
 - Consider visibility and cloud cover
 - Relate weather to operational impacts
-
-When responding:
-1. Determine if real-time data or historical data is needed
-2. Retrieve appropriate weather information
-3. Analyze conditions for safety implications
-4. Provide actionable meteorological insights
-5. Include coordinates and timestamps
 """
     
     def process(self, query: str, context: Optional[Dict] = None) -> Dict[str, Any]:
@@ -86,45 +96,17 @@ When responding:
         locations = entities.get("locations", [])
         coordinates = entities.get("coordinates", [])
         
-        # Use LLM to determine tools and parameters
-        tool_selection_prompt = f"""Analyze this weather query and determine which tools to use.
-
-Query: {query}
-
-Context: {json.dumps(context) if context else 'None'}
-
-Extracted locations: {locations}
-Extracted coordinates: {coordinates}
-
-Available tools:
-1. get_current_weather - Real-time weather at coordinates
-2. get_weather_by_city - Real-time weather for city
-3. get_forecast - Weather forecast (up to 5 days)
-4. get_weather_events_by_type - Historical weather events
-5. get_weather_events_in_area - Weather events in geographic area
-6. vector_search - Semantic search historical data
-
-Return JSON:
-{{
-  "selected_tools": ["tool_name"],
-  "parameters": {{"tool_name": {{"param": "value"}}}},
-  "reasoning": "Explanation"
-}}
-
-Extract cities, coordinates, or areas from the query for parameters.
-Determine if real-time (API) or historical (database) data is needed.
-"""
-        
-        tool_decision = self.llm.generate(
-            prompt=tool_selection_prompt,
-            system_prompt=self.system_prompt,
-            json_mode=True,
-            temperature=0.3
-        )
-        
+        # Use DSPy to determine tools and parameters
         try:
-            decision = json.loads(tool_decision)
-        except:
+            result = self.tool_predictor(
+                query=query,
+                context=json.dumps(context) if context else 'None',
+                extracted_locations=str(locations),
+                extracted_coordinates=str(coordinates)
+            )
+            decision = result.output.model_dump() if hasattr(result.output, 'model_dump') else result.output.dict()
+        except Exception as e:
+            print(f"⚠️ DSPy tool selection failed: {e}")
             decision = {
                 "selected_tools": ["vector_search"],
                 "parameters": {"vector_search": {"query": query}},
@@ -151,19 +133,20 @@ Determine if real-time (API) or historical (database) data is needed.
                 elif tool_name == "get_forecast":
                     lat = params.get("lat", 0)
                     lon = params.get("lon", 0)
-                    days = params.get("days", 3)
+                    days = params.get("days")
                     tool_results[tool_name] = self.api_tool.get_forecast(lat, lon, days)
                 
                 elif tool_name == "get_weather_events_by_type":
                     event_type = params.get("type", "")
-                    tool_results[tool_name] = self.sql_tool.get_weather_events_by_type(event_type)
+                    tool_results[tool_name] = self.sql_tool.get_weather_events_by_type(event_type, params.get("limit"))
                 
                 elif tool_name == "get_weather_events_in_area":
                     tool_results[tool_name] = self.sql_tool.get_weather_events_in_area(
                         params.get("lat_min", 0),
                         params.get("lat_max", 0),
                         params.get("lon_min", 0),
-                        params.get("lon_max", 0)
+                        params.get("lon_max", 0),
+                        params.get("limit")
                     )
                 
                 elif tool_name == "vector_search":
@@ -181,32 +164,16 @@ Determine if real-time (API) or historical (database) data is needed.
         severity_analysis = self._analyze_severity(tool_results)
         
         # Generate final response
-        response_prompt = f"""Based on the query and weather data, provide a comprehensive meteorological assessment.
-
-Query: {query}
-
-Weather Data:
-{json.dumps(tool_results, indent=2, default=str)}
-
-Severity Analysis:
-{json.dumps(severity_analysis, indent=2)}
-
-Provide:
-1. Current weather conditions or forecast
-2. Temperature (Celsius and Fahrenheit)
-3. Wind conditions and visibility
-4. Aviation impact assessment
-5. Any severe weather warnings
-6. Operational recommendations
-
-Be specific about hazards and their implications for flight operations and disaster response.
-"""
-        
-        final_answer = self.llm.generate(
-            prompt=response_prompt,
-            system_prompt=self.system_prompt,
-            temperature=0.7
-        )
+        try:
+            result = self.response_predictor(
+                query=query,
+                weather_data=json.dumps(tool_results, default=str),
+                severity_analysis=json.dumps(severity_analysis)
+            )
+            final_answer = result.response
+        except Exception as e:
+            print(f"⚠️ DSPy response generation failed: {e}")
+            final_answer = f"Error generating meteorological response: {e}\nRaw Analysis: {json.dumps(severity_analysis)}"
         
         return {
             "agent": "weather",

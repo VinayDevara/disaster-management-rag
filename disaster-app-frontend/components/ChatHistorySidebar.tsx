@@ -61,7 +61,7 @@ export default function ChatHistorySidebar({ onSelectSession, onNewChat, selecte
   };
 
   return (
-    <div className="w-64 bg-slate-900/50 border-r border-slate-700/50 p-4 flex flex-col h-screen">
+    <div className="w-64 bg-gray-100 dark:bg-slate-900/50 border-r border-gray-300 dark:border-slate-700/50 p-4 flex flex-col h-screen">
       <div className="mb-6">
         <Button 
           onClick={handleNewChat}
@@ -73,9 +73,9 @@ export default function ChatHistorySidebar({ onSelectSession, onNewChat, selecte
       </div>
 
       <div className="flex-1 overflow-y-auto space-y-2">
-        <h3 className="text-sm font-semibold text-gray-400 px-2 mb-4">Chat History</h3>
+        <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-400 px-2 mb-4">Chat History</h3>
         {loading ? (
-          <div className="text-gray-400 text-sm px-2">Loading...</div>
+          <div className="text-gray-600 dark:text-gray-400 text-sm px-2">Loading...</div>
         ) : sessions.length > 0 ? (
           sessions.map(session => (
             <div
@@ -84,16 +84,16 @@ export default function ChatHistorySidebar({ onSelectSession, onNewChat, selecte
               className={`group p-3 rounded-lg transition-all cursor-pointer ${
                 selectedSessionId === session.id
                   ? 'bg-blue-600/20 border border-blue-500/30'
-                  : 'hover:bg-slate-800/50'
+                  : 'hover:bg-gray-200 dark:hover:bg-slate-800/50'
               }`}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <MessageCircle className="w-3 h-3 text-blue-400 flex-shrink-0" />
-                    <p className="text-sm text-gray-200 truncate">{session.title}</p>
+                    <MessageCircle className="w-3 h-3 text-blue-500 dark:text-blue-400 flex-shrink-0" />
+                    <p className="text-sm text-gray-900 dark:text-gray-200 truncate">{session.title}</p>
                   </div>
-                  <p className="text-xs text-gray-500 mt-1 ml-5">
+                  <p className="text-xs text-gray-500 dark:text-gray-500 mt-1 ml-5">
                     {new Date(session.created_at).toLocaleDateString()}
                   </p>
                 </div>
@@ -101,19 +101,19 @@ export default function ChatHistorySidebar({ onSelectSession, onNewChat, selecte
                   onClick={(e) => deleteSession(e, session.id)}
                   className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-red-500/20 rounded"
                 >
-                  <Trash2 className="w-4 h-4 text-red-400" />
+                  <Trash2 className="w-4 h-4 text-red-500 dark:text-red-400" />
                 </button>
               </div>
             </div>
           ))
         ) : (
-          <div className="text-gray-400 text-sm px-2">No chat history yet</div>
+          <div className="text-gray-600 dark:text-gray-400 text-sm px-2">No chat history yet</div>
         )}
       </div>
 
       {/* User Info */}
-      <div className="border-t border-slate-700/50 pt-4 mt-4">
-        <Button variant="outline" className="w-full text-gray-300 border-slate-600 hover:bg-slate-800/50">
+      <div className="border-t border-gray-300 dark:border-slate-700/50 pt-4 mt-4">
+        <Button variant="outline" className="w-full text-gray-700 dark:text-gray-300 border-gray-300 dark:border-slate-600 hover:bg-gray-200 dark:hover:bg-slate-800/50">
           Sign Out
         </Button>
       </div>

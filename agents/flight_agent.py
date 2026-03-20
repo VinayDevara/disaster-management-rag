@@ -8,6 +8,42 @@ from utils.database import DatabaseManager
 from utils.vector_db import VectorDBManager
 from tools.sql_tool import SQLTool
 import json
+import dspy
+from pydantic import BaseModel, Field
+
+class FlightToolSelection(BaseModel):
+    selected_tools: list[str] = Field(description="List of tools to use")
+    parameters: dict = Field(description="Parameters for each tool. You MUST analyze the query and explicitly provide dynamic values for integers like 'limit' (e.g., 50 for broad queries, 5 for specific), 'radius_deg', 'min_altitude', or 'hours' rather than letting the system use arbitrary defaults.")
+    reasoning: str = Field(description="Why these tools and specific dynamic parameters were selected")
+
+class SelectFlightTools(dspy.Signature):
+    """Analyze a flight-related query and determine which tools to use.
+    
+    Tools:
+    1. get_all_flights - Get recent flights
+    2. get_flight_by_callsign - Search specific flight number
+    3. get_flight_by_hex - Search by aircraft identifier
+    4. get_flights_in_area - Search by geographic bounding box
+    5. get_emergency_flights - Find emergency situations
+    6. get_flight_trajectory - Get flight path history
+    7. get_flights_near_location - Find flights near coordinates
+    8. vector_search - Semantic search for complex queries
+    """
+    query: str = dspy.InputField()
+    context: str = dspy.InputField()
+    output: FlightToolSelection = dspy.OutputField()
+
+class GenerateFlightResponse(dspy.Signature):
+    """Generate a comprehensive answer based on flight data. Include:
+1. Direct answer to the query
+2. Relevant flight details (callsign, position, altitude, status)
+3. Any emergency or safety concerns
+4. Geographic context if applicable
+5. Timestamps and tracking information
+"""
+    query: str = dspy.InputField()
+    tool_results: str = dspy.InputField()
+    response: str = dspy.OutputField()
 
 class FlightAgent:
     """
@@ -25,25 +61,17 @@ class FlightAgent:
         self.db = db_manager
         self.vector_db = vector_db
         self.sql_tool = SQLTool(db_manager)
+        self.tool_predictor = dspy.Predict(SelectFlightTools)
+        self.response_predictor = dspy.ChainOfThought(GenerateFlightResponse)
         
-        self.system_prompt = """You are a Flight Tracking Specialist Agent for disaster management.
+        self.system_prompt = """You are a Flight & Aviation Surveillance Agent for disaster management.
 
 Your capabilities:
 1. Query ADS-B flight data using SQL
 2. Search flight information using semantic search
 3. Analyze flight patterns and trajectories
 4. Identify emergency situations and diversions
-5. Correlate flight data with geographic locations
-
-Available tools:
-- get_all_flights(limit): Get recent flights
-- get_flight_by_callsign(callsign): Search by flight number
-- get_flight_by_hex(hex_code): Search by aircraft hex code
-- get_flights_in_area(lat_min, lat_max, lon_min, lon_max): Get flights in area
-- get_emergency_flights(): Get flights with emergency status
-- get_flight_trajectory(hex_code): Get flight path
-- get_flights_near_location(lat, lon, radius_deg): Get flights near coordinates
-- vector_search(query): Semantic search across flight data
+5. Assist search & rescue operations by tracking relevant flights within a disaster area.
 
 Guidelines:
 - Always verify flight callsigns and hex codes
@@ -52,13 +80,6 @@ Guidelines:
 - Provide coordinates when relevant
 - Use vector search for natural language queries
 - Be precise with technical aviation terminology
-
-When responding:
-1. First determine which tool(s) to use based on the query
-2. Execute the appropriate queries
-3. Analyze the results using your aviation expertise
-4. Provide clear, actionable information
-5. Include relevant coordinates and timestamps
 """
     
     def process(self, query: str, context: Optional[Dict] = None) -> Dict[str, Any]:
@@ -74,43 +95,15 @@ When responding:
         """
         print(f"✈️  Flight Agent processing: {query}")
         
-        # Use LLM to determine which tools to use
-        tool_selection_prompt = f"""Analyze this flight-related query and determine which tools to use.
-
-Query: {query}
-
-Context: {json.dumps(context) if context else 'None'}
-
-Available tools:
-1. get_all_flights - Get recent flights
-2. get_flight_by_callsign - Search specific flight number
-3. get_flight_by_hex - Search by aircraft identifier
-4. get_flights_in_area - Search by geographic bounding box
-5. get_emergency_flights - Find emergency situations
-6. get_flight_trajectory - Get flight path history
-7. get_flights_near_location - Find flights near coordinates
-8. vector_search - Semantic search for complex queries
-
-Return a JSON object with:
-{{
-  "selected_tools": ["tool_name1", "tool_name2"],
-  "parameters": {{"tool_name1": {{"param": "value"}}, ...}},
-  "reasoning": "Why these tools were selected"
-}}
-
-If the query mentions specific flight numbers, hex codes, or locations, extract them for parameters.
-"""
-        
-        tool_decision = self.llm.generate(
-            prompt=tool_selection_prompt,
-            system_prompt=self.system_prompt,
-            json_mode=True,
-            temperature=0.3
-        )
-        
+        # Use DSPy to determine which tools to use
         try:
-            decision = json.loads(tool_decision)
-        except:
+            result = self.tool_predictor(
+                query=query,
+                context=json.dumps(context) if context else 'None'
+            )
+            decision = result.output.model_dump() if hasattr(result.output, 'model_dump') else result.output.dict()
+        except Exception as e:
+            print(f"⚠️ DSPy tool selection failed: {e}")
             decision = {
                 "selected_tools": ["vector_search"],
                 "parameters": {"vector_search": {"query": query}},
@@ -125,7 +118,7 @@ If the query mentions specific flight numbers, hex codes, or locations, extract 
             
             try:
                 if tool_name == "get_all_flights":
-                    limit = params.get("limit", 100)
+                    limit = params.get("limit")
                     tool_results[tool_name] = self.sql_tool.get_all_flights(limit)
                 
                 elif tool_name == "get_flight_by_callsign":
@@ -142,11 +135,11 @@ If the query mentions specific flight numbers, hex codes, or locations, extract 
                         params.get("lat_max", 0),
                         params.get("lon_min", 0),
                         params.get("lon_max", 0),
-                        params.get("limit", 100)
+                        params.get("limit")
                     )
                 
                 elif tool_name == "get_emergency_flights":
-                    tool_results[tool_name] = self.sql_tool.get_emergency_flights()
+                    tool_results[tool_name] = self.sql_tool.get_emergency_flights(params.get("limit"))
                 
                 elif tool_name == "get_flight_trajectory":
                     hex_code = params.get("hex_code", "")
@@ -156,7 +149,8 @@ If the query mentions specific flight numbers, hex codes, or locations, extract 
                     tool_results[tool_name] = self.sql_tool.get_flights_near_location(
                         params.get("lat", 0),
                         params.get("lon", 0),
-                        params.get("radius_deg", 1.0)
+                        params.get("radius_deg"),
+                        params.get("limit")
                     )
                 
                 elif tool_name == "vector_search":
@@ -170,29 +164,16 @@ If the query mentions specific flight numbers, hex codes, or locations, extract 
             except Exception as e:
                 tool_results[tool_name] = {"error": str(e)}
         
-        # Generate final response using LLM
-        response_prompt = f"""Based on the query and retrieved data, provide a comprehensive answer.
-
-Query: {query}
-
-Tool Results:
-{json.dumps(tool_results, indent=2, default=str)}
-
-Provide:
-1. Direct answer to the query
-2. Relevant flight details (callsign, position, altitude, status)
-3. Any emergency or safety concerns
-4. Geographic context if applicable
-5. Timestamps and tracking information
-
-Be specific and technical where appropriate. Include coordinates for mapping.
-"""
-        
-        final_answer = self.llm.generate(
-            prompt=response_prompt,
-            system_prompt=self.system_prompt,
-            temperature=0.7
-        )
+        # Generate final response using DSPy
+        try:
+            result = self.response_predictor(
+                query=query,
+                tool_results=json.dumps(tool_results, indent=2, default=str)
+            )
+            final_answer = result.response
+        except Exception as e:
+            print(f"⚠️ DSPy flight response generation failed: {e}")
+            final_answer = f"Error generating flight response: {e}"
         
         return {
             "agent": "flight",

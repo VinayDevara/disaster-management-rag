@@ -77,7 +77,7 @@ export default function DisasterStatusOverview() {
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {[...Array(4)].map((_, i) => (
-          <Card key={i} className="h-40 bg-slate-800/50 border-slate-700/50 animate-pulse" />
+          <Card key={i} className="h-40 bg-gray-200 dark:bg-slate-800/50 border-gray-300 dark:border-slate-700/50 animate-pulse" />
         ))}
       </div>
     );
@@ -91,50 +91,50 @@ export default function DisasterStatusOverview() {
     <div className="space-y-6">
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="bg-gradient-to-br from-red-900/20 to-red-900/5 border-red-500/20 hover:border-red-500/40 transition-all">
+        <Card className="bg-gradient-to-br from-red-50 to-red-100 dark:from-red-900/20 dark:to-red-900/5 border-red-200 dark:border-red-500/20 hover:border-red-300 dark:hover:border-red-500/40 transition-all">
           <div className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-400 mb-2">Active Disasters</p>
-                <p className="text-3xl font-bold text-red-300">{activeDisasters}</p>
+                <p className="text-sm text-gray-700 dark:text-gray-400 mb-2">Active Disasters</p>
+                <p className="text-3xl font-bold text-red-600 dark:text-red-300">{activeDisasters}</p>
               </div>
-              <AlertTriangle className="w-10 h-10 text-red-500/50" />
+              <AlertTriangle className="w-10 h-10 text-red-400 dark:text-red-500/50" />
             </div>
           </div>
         </Card>
 
-        <Card className="bg-gradient-to-br from-orange-900/20 to-orange-900/5 border-orange-500/20 hover:border-orange-500/40 transition-all">
+        <Card className="bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-900/20 dark:to-orange-900/5 border-orange-200 dark:border-orange-500/20 hover:border-orange-300 dark:hover:border-orange-500/40 transition-all">
           <div className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-400 mb-2">Critical Events</p>
-                <p className="text-3xl font-bold text-orange-300">{criticalCount}</p>
+                <p className="text-sm text-gray-700 dark:text-gray-400 mb-2">Critical Events</p>
+                <p className="text-3xl font-bold text-orange-600 dark:text-orange-300">{criticalCount}</p>
               </div>
-              <AlertTriangle className="w-10 h-10 text-orange-500/50" />
+              <AlertTriangle className="w-10 h-10 text-orange-400 dark:text-orange-500/50" />
             </div>
           </div>
         </Card>
 
-        <Card className="bg-gradient-to-br from-blue-900/20 to-blue-900/5 border-blue-500/20 hover:border-blue-500/40 transition-all">
+        <Card className="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-900/5 border-blue-200 dark:border-blue-500/20 hover:border-blue-300 dark:hover:border-blue-500/40 transition-all">
           <div className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-400 mb-2">Total Affected</p>
-                <p className="text-3xl font-bold text-blue-300">{totalAffected.toLocaleString()}</p>
+                <p className="text-sm text-gray-700 dark:text-gray-400 mb-2">Total Affected</p>
+                <p className="text-3xl font-bold text-blue-600 dark:text-blue-300">{totalAffected.toLocaleString()}</p>
               </div>
-              <Users className="w-10 h-10 text-blue-500/50" />
+              <Users className="w-10 h-10 text-blue-400 dark:text-blue-500/50" />
             </div>
           </div>
         </Card>
 
-        <Card className="bg-gradient-to-br from-cyan-900/20 to-cyan-900/5 border-cyan-500/20 hover:border-cyan-500/40 transition-all">
+        <Card className="bg-gradient-to-br from-cyan-50 to-cyan-100 dark:from-cyan-900/20 dark:to-cyan-900/5 border-cyan-200 dark:border-cyan-500/20 hover:border-cyan-300 dark:hover:border-cyan-500/40 transition-all">
           <div className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-400 mb-2">Total Events</p>
-                <p className="text-3xl font-bold text-cyan-300">{disasters.length}</p>
+                <p className="text-sm text-gray-700 dark:text-gray-400 mb-2">Total Events</p>
+                <p className="text-3xl font-bold text-cyan-600 dark:text-cyan-300">{disasters.length}</p>
               </div>
-              <Clock className="w-10 h-10 text-cyan-500/50" />
+              <Clock className="w-10 h-10 text-cyan-400 dark:text-cyan-500/50" />
             </div>
           </div>
         </Card>
@@ -144,15 +144,15 @@ export default function DisasterStatusOverview() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {disasters.length > 0 ? (
           disasters.map(disaster => (
-            <Card key={disaster.id} className="bg-slate-800/50 border-slate-700/50 hover:border-slate-600/50 transition-all hover:shadow-lg hover:shadow-blue-500/10">
+            <Card key={disaster.id} className="bg-gray-50 dark:bg-slate-800/50 border-gray-200 dark:border-slate-700/50 hover:border-gray-300 dark:hover:border-slate-600/50 transition-all hover:shadow-lg dark:hover:shadow-blue-500/10">
               <div className="p-6">
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-2">
                       <span className="text-xl">{getStatusIcon(disaster.status)}</span>
-                      <h3 className="font-semibold text-lg text-white capitalize">{disaster.type}</h3>
+                      <h3 className="font-semibold text-lg text-gray-900 dark:text-white capitalize">{disaster.type}</h3>
                     </div>
-                    <p className="text-sm text-gray-400 flex items-center gap-2">
+                    <p className="text-sm text-gray-600 dark:text-gray-400 flex items-center gap-2">
                       <MapPin className="w-4 h-4" />
                       {disaster.location}
                     </p>
@@ -162,28 +162,28 @@ export default function DisasterStatusOverview() {
                   </Badge>
                 </div>
 
-                <p className="text-sm text-gray-300 mb-4">{disaster.description || 'No description available'}</p>
+                <p className="text-sm text-gray-700 dark:text-gray-300 mb-4">{disaster.description || 'No description available'}</p>
 
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
-                    <p className="text-gray-500">Affected People</p>
-                    <p className="text-lg font-semibold text-cyan-300">{disaster.affected_people?.toLocaleString() || 0}</p>
+                    <p className="text-gray-600 dark:text-gray-500">Affected People</p>
+                    <p className="text-lg font-semibold text-cyan-600 dark:text-cyan-300">{disaster.affected_people?.toLocaleString() || 0}</p>
                   </div>
                   <div>
-                    <p className="text-gray-500">Status</p>
-                    <p className="text-lg font-semibold text-green-300 capitalize">{disaster.status}</p>
+                    <p className="text-gray-600 dark:text-gray-500">Status</p>
+                    <p className="text-lg font-semibold text-green-600 dark:text-green-300 capitalize">{disaster.status}</p>
                   </div>
                 </div>
 
-                <div className="mt-4 text-xs text-gray-500">
+                <div className="mt-4 text-xs text-gray-500 dark:text-gray-500">
                   {new Date(disaster.created_at).toLocaleDateString()} at {new Date(disaster.created_at).toLocaleTimeString()}
                 </div>
               </div>
             </Card>
           ))
         ) : (
-          <Card className="col-span-2 bg-slate-800/50 border-slate-700/50 p-8 text-center">
-            <p className="text-gray-400">No active disasters to display</p>
+          <Card className="col-span-2 bg-gray-50 dark:bg-slate-800/50 border-gray-200 dark:border-slate-700/50 p-8 text-center">
+            <p className="text-gray-600 dark:text-gray-400">No active disasters to display</p>
           </Card>
         )}
       </div>

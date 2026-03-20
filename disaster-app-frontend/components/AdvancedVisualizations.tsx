@@ -126,7 +126,7 @@ export default function AdvancedVisualizations() {
     return (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {[...Array(4)].map((_, i) => (
-          <Card key={i} className="h-80 bg-slate-800/50 border-slate-700/50 animate-pulse" />
+          <Card key={i} className="h-80 bg-gray-200 dark:bg-slate-800/50 border-gray-300 dark:border-slate-700/50 animate-pulse" />
         ))}
       </div>
     );
@@ -135,8 +135,8 @@ export default function AdvancedVisualizations() {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       {/* Disaster Types Pie Chart */}
-      <Card className="bg-slate-800/50 border-slate-700/50 p-6">
-        <h3 className="text-lg font-semibold text-white mb-4">Disasters by Type</h3>
+      <Card className="bg-gray-50 dark:bg-slate-800/50 border-gray-200 dark:border-slate-700/50 p-6">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Disasters by Type</h3>
         {disasterTypes.length > 0 ? (
           <ResponsiveContainer width="100%" height={300}>
             <PieChart>
@@ -168,8 +168,8 @@ export default function AdvancedVisualizations() {
       </Card>
 
       {/* Severity Distribution Pie Chart */}
-      <Card className="bg-slate-800/50 border-slate-700/50 p-6">
-        <h3 className="text-lg font-semibold text-white mb-4">Severity Distribution</h3>
+      <Card className="bg-gray-50 dark:bg-slate-800/50 border-gray-200 dark:border-slate-700/50 p-6">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Severity Distribution</h3>
         {severityData.length > 0 ? (
           <ResponsiveContainer width="100%" height={300}>
             <PieChart>
@@ -212,8 +212,8 @@ export default function AdvancedVisualizations() {
       </Card>
 
       {/* Events Over Time */}
-      <Card className="bg-slate-800/50 border-slate-700/50 p-6 lg:col-span-2">
-        <h3 className="text-lg font-semibold text-white mb-4">Events Trend (Last 30 Days)</h3>
+      <Card className="bg-gray-50 dark:bg-slate-800/50 border-gray-200 dark:border-slate-700/50 p-6 lg:col-span-2">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Events Trend (Last 30 Days)</h3>
         {timeSeriesData.length > 0 ? (
           <ResponsiveContainer width="100%" height={300}>
             <AreaChart data={timeSeriesData}>
@@ -248,31 +248,35 @@ export default function AdvancedVisualizations() {
       </Card>
 
       {/* Top Affected Locations Bar Chart */}
-      <Card className="bg-slate-800/50 border-slate-700/50 p-6 lg:col-span-2">
-        <h3 className="text-lg font-semibold text-white mb-4">Most Affected Locations</h3>
-        {locationData.length > 0 ? (
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={locationData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#475569" />
-              <XAxis dataKey="name" stroke="#94a3b8" angle={-45} textAnchor="end" height={80} />
-              <YAxis stroke="#94a3b8" />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #475569' }}
-                labelStyle={{ color: '#e2e8f0' }}
-              />
-              <Bar dataKey="count" fill="#06b6d4" radius={[8, 8, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        ) : (
-          <div className="h-80 flex items-center justify-center text-gray-400">
-            No data available
-          </div>
-        )}
-      </Card>
+<Card className="bg-gray-50 dark:bg-slate-800/50 border-gray-200 dark:border-slate-700/50 p-6 lg:col-span-2">
+  <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Most Affected Locations</h3>
+  {locationData.length > 0 ? (
+    <ResponsiveContainer width="100%" height={300}>
+      <BarChart data={locationData}> {/* Changed from PieChart */}
+        <CartesianGrid strokeDasharray="3 3" stroke="#475569" />
+        <XAxis dataKey="name" stroke="#94a3b8" angle={-45} textAnchor="end" height={80} />
+        <YAxis stroke="#94a3b8" />
+        <Tooltip
+          contentStyle={{ 
+            backgroundColor: '#1e293b', 
+            border: '1px solid #475569' 
+          }}
+          labelStyle={{ color: '#e2e8f0' }}
+        />
+        <Legend />
+        <Bar dataKey="count" fill="#3b82f6" /> {/* Added Bar component */}
+      </BarChart>
+    </ResponsiveContainer>
+  ) : (
+    <div className="h-80 flex items-center justify-center text-gray-400 dark:text-gray-400">
+      No data available
+    </div>
+  )}
+</Card>
 
       {/* People Affected Trend */}
-      <Card className="bg-slate-800/50 border-slate-700/50 p-6 lg:col-span-2">
-        <h3 className="text-lg font-semibold text-white mb-4">People Affected Trend</h3>
+      <Card className="bg-gray-50 dark:bg-slate-800/50 border-gray-200 dark:border-slate-700/50 p-6 lg:col-span-2">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">People Affected Trend</h3>
         {timeSeriesData.length > 0 ? (
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={timeSeriesData}>

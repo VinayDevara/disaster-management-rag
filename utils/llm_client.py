@@ -6,6 +6,7 @@ import os
 import json
 from typing import Dict, List, Optional, Any
 from groq import Groq
+import dspy
 from config.config import Config
 
 class LLMClient:
@@ -18,6 +19,13 @@ class LLMClient:
         self.api_key = api_key or Config.GROQ_API_KEY
         self.model = model or Config.GROQ_MODEL
         self.client = Groq(api_key=self.api_key)
+        self.init_dspy()
+        
+    def init_dspy(self):
+        """Initialize DSPy globally with the Groq model"""
+        lm = dspy.LM(f'groq/{self.model}', api_key=self.api_key)
+        dspy.configure(lm=lm)
+        return lm
         
     def generate(
         self,

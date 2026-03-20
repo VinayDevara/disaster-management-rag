@@ -5,7 +5,48 @@ Classifies complex queries and coordinates multi-agent responses
 from typing import Dict, List, Any, Optional
 from utils.llm_client import get_llm_client
 import json
+import dspy
+from pydantic import BaseModel, Field
 
+class ClassificationOutput(BaseModel):
+    query_type: str = Field(description="'simple' or 'complex'")
+    primary_agent: str = Field(description="'flight', 'weather', or 'disaster'")
+    secondary_agents: list[str] = Field(description="List of secondary agents needed")
+    requires_cross_intelligence: bool = Field(description="True if multiple domains need to correlate")
+    reasoning: str = Field(description="Explanation for classification")
+
+class ClassifyQuery(dspy.Signature):
+    """Classify user queries for a disaster management system.
+
+1. FLIGHT AGENT - Flight tracking and ADS-B data, aircraft surveillance.
+2. WEATHER AGENT - Current weather, forecasts, severe weather, maritime conditions.
+3. DISASTER AGENT - Natural disasters, urban evacuation plans, emergency logistics.
+
+Query Classification Guidelines:
+- SIMPLE queries need ONE agent
+- COMPLEX queries need MULTIPLE agents
+- Cross-intelligence queries require correlation between domains
+
+Examples:
+- "What flights are near Los Angeles?" -> Flight Agent only
+- "Show active wildfires" -> Disaster Agent only
+- "Are flights affected by California wildfires?" -> Flight + Disaster (complex)
+- "What's the weather in the hurricane zone and are flights diverted?" -> Weather + Flight (complex)
+"""
+    query: str = dspy.InputField(desc="The user query to classify")
+    output: ClassificationOutput = dspy.OutputField()
+
+class SubqueriesOutput(BaseModel):
+    flight: str = Field(description="Specific flight question, or empty string if not needed", default="")
+    weather: str = Field(description="Specific weather question, or empty string if not needed", default="")
+    disaster: str = Field(description="Specific disaster question, or empty string if not needed", default="")
+
+class DecomposeQuery(dspy.Signature):
+    """Break down this complex query into specific sub-queries for each agent. Create focused sub-queries that each agent can answer independently."""
+    query: str = dspy.InputField(desc="Original user query")
+    primary_agent: str = dspy.InputField()
+    secondary_agents: str = dspy.InputField()
+    output: SubqueriesOutput = dspy.OutputField()
 class OrchestratorAgent:
     """
     Orchestration layer that:
@@ -17,6 +58,8 @@ class OrchestratorAgent:
     
     def __init__(self):
         self.llm = get_llm_client()
+        self.classify_predictor = dspy.Predict(ClassifyQuery)
+        self.decompose_predictor = dspy.Predict(DecomposeQuery)
         
         self.system_prompt = """You are an Orchestrator Agent for a disaster management system.
 
@@ -82,18 +125,13 @@ Return JSON with:
         """
         print(f"🎯 Orchestrator classifying query: {query}")
         
-        # Use LLM for intelligent classification
-        classification_response = self.llm.generate(
-            prompt=f"Classify this query and determine routing:\n\nQuery: {query}",
-            system_prompt=self.system_prompt,
-            json_mode=True,
-            temperature=0.3
-        )
-        
         try:
-            classification = json.loads(classification_response)
-        except:
+            result = self.classify_predictor(query=query)
+            classification = result.output.model_dump() if hasattr(result.output, 'model_dump') else result.output.dict()
+            classification["extracted_entities"] = {}
+        except Exception as e:
             # Fallback classification
+            print(f"⚠️ DSPy classification failed: {e}")
             classification = {
                 "query_type": "simple",
                 "primary_agent": "flight",
@@ -130,38 +168,19 @@ Return JSON with:
         if classification.get("query_type") == "simple":
             return {classification["primary_agent"]: query}
         
-        # Use LLM to break down complex query
-        decomposition_prompt = f"""Break down this complex query into specific sub-queries for each agent.
-
-Original Query: {query}
-
-Primary Agent: {classification['primary_agent']}
-Secondary Agents: {classification['secondary_agents']}
-
-Create focused sub-queries that each agent can answer independently.
-The consensus agent will later correlate the results.
-
-Return JSON:
-{{
-  "flight": "specific flight-related question" (if needed),
-  "weather": "specific weather-related question" (if needed),
-  "disaster": "specific disaster-related question" (if needed)
-}}
-
-Only include agents that are needed for this query.
-"""
-        
-        decomposition_response = self.llm.generate(
-            prompt=decomposition_prompt,
-            system_prompt=self.system_prompt,
-            json_mode=True,
-            temperature=0.4
-        )
-        
         try:
-            sub_queries = json.loads(decomposition_response)
-        except:
-            # Fallback: send full query to all agents
+            result = self.decompose_predictor(
+                query=query,
+                primary_agent=classification['primary_agent'],
+                secondary_agents=str(classification.get('secondary_agents', []))
+            )
+            sub_q = result.output.model_dump() if hasattr(result.output, 'model_dump') else result.output.dict()
+            # Filter out empty strings
+            sub_queries = {k: v for k, v in sub_q.items() if v and isinstance(v, str) and v.strip()}
+            if not sub_queries:
+                raise ValueError("No subqueries extracted")
+        except Exception as e:
+            print(f"⚠️ DSPy decomposition failed: {e}")
             agents = [classification["primary_agent"]] + classification.get("secondary_agents", [])
             sub_queries = {agent: query for agent in agents}
         

@@ -175,10 +175,10 @@ export default function ChatInterface({ user, sessionId: initialSessionId, onNew
   };
 
   return (
-    <Card className="bg-slate-800/50 border-slate-700/50 flex flex-col h-full rounded-none">
+    <Card className="bg-gray-50 dark:bg-slate-800/50 border-gray-200 dark:border-slate-700/50 p-6">
       {/* Header */}
-      <div className="border-b border-slate-700/50 p-4 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-gray-200">{sessionTitle || 'New Chat'}</h3>
+      <div className="border-b border-gray-200 p-4 flex items-center justify-between">
+        <h3 className="text-sm font-semibold black">{sessionTitle || 'New Chat'}</h3>
         <Button
           onClick={() => {
             setMessages([]);
@@ -188,7 +188,7 @@ export default function ChatInterface({ user, sessionId: initialSessionId, onNew
           }}
           variant="ghost"
           size="sm"
-          className="text-gray-400 hover:text-blue-400"
+          className="black hover:text-blue-400"
         >
           <Plus className="w-4 h-4 mr-1" />
           New
@@ -198,7 +198,7 @@ export default function ChatInterface({ user, sessionId: initialSessionId, onNew
       {/* Messages Container */}
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
         {messages.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-gray-400">
+          <div className="flex items-center justify-center h-full black">
             <div className="text-center">
               <p className="mb-2">Start a conversation about disaster management</p>
               <p className="text-sm">Ask me about disaster types, affected areas, or response strategies</p>
@@ -214,7 +214,7 @@ export default function ChatInterface({ user, sessionId: initialSessionId, onNew
                 className={`max-w-xs lg:max-w-md px-4 py-3 rounded-lg ${
                   message.role === 'user'
                     ? 'bg-blue-600 text-white rounded-br-none'
-                    : 'bg-slate-700 text-gray-100 rounded-bl-none'
+                    : 'bg-gray-50 text-black rounded-bl-none'
                 }`}
               >
                 <p className="text-sm">{message.content}</p>
