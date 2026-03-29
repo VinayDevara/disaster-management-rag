@@ -235,10 +235,9 @@ class DisasterAPITool:
         """
         limit = max(1, min(int(limit), 500))
         try:
-            url = f"{self.base_url}/categories/{category}"
-            params = {"limit": limit}
+            params = {"category": category, "limit": limit, "status": "open"}
             
-            response = requests.get(url, params=params, timeout=10)
+            response = requests.get(self.base_url, params=params, timeout=10)
             response.raise_for_status()
             
             data = response.json()

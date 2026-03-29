@@ -1,265 +1,437 @@
 """
-Weather Agent - Handles weather-related queries
-Uses Weather API, Vector DB, and LLM reasoning
+Weather Agent - CrewAI + DSPy Implementation
+Handles weather-related queries using CrewAI tools and DSPy structured output
 """
 from typing import Dict, List, Optional, Any
 from utils.llm_client import get_llm_client
 from utils.database import DatabaseManager
 from utils.vector_db import VectorDBManager
-from tools.sql_tool import WeatherSQLTool
+from tools.sql_tool import WeatherSQLTool, ForecastSQLTool, RainfallSQLTool, LandslideSQLTool
 from tools.api_tool import WeatherAPITool
+from agents.dspy_signatures import GenerateWeatherResponse
+from config.config import Config
 import json
 import dspy
-from pydantic import BaseModel, Field
+from crewai import Agent, Task, Crew, LLM
+from crewai.tools import BaseTool
 
-class WeatherToolSelection(BaseModel):
-    selected_tools: list[str] = Field(description="List of tools to use")
-    parameters: dict = Field(description="Parameters for each tool. You MUST analyze the query and explicitly provide dynamic values for integers like 'limit' (e.g., 50 for broad queries, 5 for specific) or 'days' rather than letting the system use arbitrary defaults.")
-    reasoning: str = Field(description="Why these tools and specific dynamic parameters were selected")
 
-class SelectWeatherTools(dspy.Signature):
-    """Analyze a weather query and determine which tools to use for an Environment & Maritime Agent.
-    
-    Tools:
-    1. get_current_weather
-    2. get_weather_by_city
-    3. get_forecast
-    4. get_weather_events_by_type
-    5. get_weather_events_in_area
-    6. vector_search
-    """
-    query: str = dspy.InputField()
-    context: str = dspy.InputField()
-    extracted_locations: str = dspy.InputField()
-    extracted_coordinates: str = dspy.InputField()
-    output: WeatherToolSelection = dspy.OutputField()
+def _get_crewai_llm():
+    return LLM(
+        model=f"groq/{Config.GROQ_MODEL}",
+        api_key=Config.GROQ_API_KEY,
+        temperature=Config.TEMPERATURE,
+        max_tokens=512,
+        num_retries=3,
+        timeout=120,
+    )
 
-class GenerateWeatherResponse(dspy.Signature):
-    """Generate a comprehensive meteorological and maritime assessment based on weather data."""
-    query: str = dspy.InputField()
-    weather_data: str = dspy.InputField()
-    severity_analysis: str = dspy.InputField()
-    response: str = dspy.OutputField(desc="""1. Conditions/forecast\n2. Temperature\n3. Wind/visibility/maritime state\n4. Aviation impact\n5. Warnings""")
+
+def _get_tool_calling_llm():
+    return LLM(
+        model=f"groq/{Config.GROQ_TOOL_MODEL}",
+        api_key=Config.GROQ_API_KEY,
+        temperature=0.1,
+        max_tokens=512,
+        num_retries=3,
+        timeout=120,
+    )
+
+
+def create_weather_tools(
+    sql_tool: WeatherSQLTool, api_tool: WeatherAPITool, vector_db: VectorDBManager,
+    forecast_sql: ForecastSQLTool = None,
+    rainfall_sql: RainfallSQLTool = None,
+    landslide_sql: LandslideSQLTool = None,
+) -> List[BaseTool]:
+    """Factory: create CrewAI tools wrapping weather SQL/API/vector operations."""
+
+    def _truncate(text, max_len=2000):
+        return text[:max_len] + "...(truncated)" if len(text) > max_len else text
+
+    class _GetCurrentWeather(BaseTool):
+        name: str = "get_current_weather"
+        description: str = "Get current weather conditions by coordinates."
+
+        def _run(self, lat: str = "0", lon: str = "0") -> str:
+            try:
+                result = api_tool.get_current_weather(float(lat), float(lon))
+                return _truncate(json.dumps(result, default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetWeatherByCity(BaseTool):
+        name: str = "get_weather_by_city"
+        description: str = "Get weather for a city by name."
+
+        def _run(self, city: str = "", country_code: str = None) -> str:
+            try:
+                result = api_tool.get_weather_by_city(str(city), country_code)
+                return _truncate(json.dumps(result, default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetForecast(BaseTool):
+        name: str = "get_forecast"
+        description: str = "Get weather forecast for coordinates."
+
+        def _run(self, lat: str = "0", lon: str = "0", days: str = "3") -> str:
+            try:
+                result = api_tool.get_forecast(float(lat), float(lon), int(days))
+                return _truncate(json.dumps(result, default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetWeatherEventsByType(BaseTool):
+        name: str = "get_weather_events_by_type"
+        description: str = "Get historical weather events by type from the database."
+
+        def _run(self, event_type: str = "", limit: str = "20") -> str:
+            try:
+                results = sql_tool.get_weather_events_by_type(str(event_type), int(limit))
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetWeatherEventsInArea(BaseTool):
+        name: str = "get_weather_events_in_area"
+        description: str = "Get weather events within a geographic bounding box."
+
+        def _run(self, lat_min: str = "0", lat_max: str = "0",
+                 lon_min: str = "0", lon_max: str = "0", limit: str = "20") -> str:
+            try:
+                results = sql_tool.get_weather_events_in_area(
+                    float(lat_min), float(lat_max),
+                    float(lon_min), float(lon_max), int(limit)
+                )
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _VectorSearchWeather(BaseTool):
+        name: str = "vector_search_weather"
+        description: str = "Semantic search across the weather knowledge base."
+
+        def _run(self, query: str) -> str:
+            try:
+                results = vector_db.search("weather", str(query), n_results=5)
+                return _truncate(json.dumps({
+                    "documents": results["documents"],
+                    "metadatas": results["metadatas"]
+                }, default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    # ── New tools for ingested external data ──────────────────────────
+
+    class _GetOpenMeteoForecasts(BaseTool):
+        name: str = "get_openmeteo_forecasts"
+        description: str = "Get latest Open-Meteo hourly forecasts for Dakshina Karnataka region."
+
+        def _run(self, location: str = "", limit: str = "48") -> str:
+            if forecast_sql is None:
+                return json.dumps({"error": "ForecastSQLTool not available"})
+            try:
+                if location:
+                    results = forecast_sql.get_forecasts_for_location(str(location), int(limit))
+                else:
+                    results = forecast_sql.get_latest_forecasts(limit=int(limit))
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetHighPrecipitation(BaseTool):
+        name: str = "get_high_precipitation_forecasts"
+        description: str = "Get forecast periods with precipitation above a threshold in mm."
+
+        def _run(self, threshold: str = "5.0", limit: str = "50") -> str:
+            if forecast_sql is None:
+                return json.dumps({"error": "ForecastSQLTool not available"})
+            try:
+                results = forecast_sql.get_high_precipitation_forecasts(float(threshold), int(limit))
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetGPMRainfall(BaseTool):
+        name: str = "get_gpm_rainfall"
+        description: str = "Get latest NASA GPM IMERG satellite rainfall observations."
+
+        def _run(self, limit: str = "50") -> str:
+            if rainfall_sql is None:
+                return json.dumps({"error": "RainfallSQLTool not available"})
+            try:
+                results = rainfall_sql.get_latest_rainfall(limit=int(limit))
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetHeavyRainfall(BaseTool):
+        name: str = "get_heavy_rainfall"
+        description: str = "Get rainfall observations exceeding a threshold in mm."
+
+        def _run(self, threshold: str = "10.0", limit: str = "50") -> str:
+            if rainfall_sql is None:
+                return json.dumps({"error": "RainfallSQLTool not available"})
+            try:
+                results = rainfall_sql.get_heavy_rainfall(float(threshold), int(limit))
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetLandslideSnapshot(BaseTool):
+        name: str = "get_landslide_snapshot"
+        description: str = "Get latest NASA LHASA landslide nowcast snapshot for the region."
+
+        def _run(self, limit: str = "50") -> str:
+            if landslide_sql is None:
+                return json.dumps({"error": "LandslideSQLTool not available"})
+            try:
+                results = landslide_sql.get_latest_snapshot(limit=int(limit))
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetHighRiskLandslide(BaseTool):
+        name: str = "get_high_risk_landslide"
+        description: str = "Get landslide cells with high risk or probability >= 0.7."
+
+        def _run(self, limit: str = "50") -> str:
+            if landslide_sql is None:
+                return json.dumps({"error": "LandslideSQLTool not available"})
+            try:
+                results = landslide_sql.get_high_risk_cells(limit=int(limit))
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    tools = [
+        _GetCurrentWeather(), _GetWeatherByCity(), _GetForecast(),
+        _GetWeatherEventsByType(), _GetWeatherEventsInArea(), _VectorSearchWeather(),
+    ]
+
+    # Conditionally include enrichment tools
+    if forecast_sql is not None:
+        tools.extend([_GetOpenMeteoForecasts(), _GetHighPrecipitation()])
+    if rainfall_sql is not None:
+        tools.extend([_GetGPMRainfall(), _GetHeavyRainfall()])
+    if landslide_sql is not None:
+        tools.extend([_GetLandslideSnapshot(), _GetHighRiskLandslide()])
+
+    return tools
+
 
 class WeatherAgent:
     """
-    Specialized agent for weather data analysis
-    
-    Capabilities:
-    - Real-time weather data retrieval
-    - Weather forecasting
-    - Historical weather event analysis
-    - Severe weather identification
-    - Geographic weather patterns
+    CrewAI-based Environment & Maritime Agent.
+
+    Uses CrewAI for tool selection/execution and DSPy for structured response generation.
     """
-    
+
     def __init__(self, db_manager: DatabaseManager, vector_db: VectorDBManager):
-        self.llm = get_llm_client()
         self.db = db_manager
         self.vector_db = vector_db
         self.sql_tool = WeatherSQLTool(db_manager)
         self.api_tool = WeatherAPITool()
-        self.tool_predictor = dspy.Predict(SelectWeatherTools)
+        self.llm = get_llm_client()
+
+        # New SQL tools for ingested data
+        self.forecast_sql = ForecastSQLTool(db_manager)
+        self.rainfall_sql = RainfallSQLTool(db_manager)
+        self.landslide_sql = LandslideSQLTool(db_manager)
+
+        # CrewAI tools and agent
+        self.tools = create_weather_tools(
+            self.sql_tool, self.api_tool, self.vector_db,
+            forecast_sql=self.forecast_sql,
+            rainfall_sql=self.rainfall_sql,
+            landslide_sql=self.landslide_sql,
+        )
+        self.crew_agent = Agent(
+            role="Environment & Maritime Agent",
+            goal=(
+                "Retrieve and analyze weather data for disaster management. "
+                "You MUST use the available tools to gather real data before answering. "
+                "Never answer from your own knowledge alone."
+            ),
+            backstory=(
+                "You are an expert meteorologist and maritime analyst. "
+                "You ALWAYS call at least one tool to fetch real data before providing an answer. "
+                "You provide weather intelligence for disaster management operations, "
+                "including aviation impact assessment and severe weather identification."
+            ),
+            tools=self.tools,
+            llm=_get_crewai_llm(),
+            verbose=True,
+            max_retry_limit=3,
+            max_iter=3,
+        )
+
+        # DSPy for structured response generation
         self.response_predictor = dspy.ChainOfThought(GenerateWeatherResponse)
-        
-        self.system_prompt = """You are an Environment & Maritime Agent for disaster management.
 
-Your capabilities:
-1. Retrieve real-time weather data for any location.
-2. Analyze weather patterns, forecasts, and maritime conditions (e.g., cyclones, tidal surges).
-3. Identify severe weather conditions.
-4. Correlate weather with flight operations and disasters.
-
-Guidelines:
-- Provide temperature in Celsius and Fahrenheit
-- Include wind speed and direction, focusing on maritime severity
-- Flag conditions hazardous for aviation or coastal regions
-- Consider visibility and cloud cover
-- Relate weather to operational impacts
-"""
-    
     def process(self, query: str, context: Optional[Dict] = None) -> Dict[str, Any]:
         """
-        Process weather-related query
-        
-        Args:
-            query: User query about weather
-            context: Optional context from orchestrator
-            
-        Returns:
-            Response dictionary with data and answer
+        Process weather-related query using CrewAI agent + DSPy response synthesis.
         """
         print(f"🌤️  Weather Agent processing: {query}")
-        
-        # Extract entities from query
-        entities = self.llm.extract_entities(query)
-        locations = entities.get("locations", [])
-        coordinates = entities.get("coordinates", [])
-        
-        # Use DSPy to determine tools and parameters
+
+        context_str = json.dumps(context, default=str) if context else "No additional context."
+
+        task = Task(
+            description=(
+                f"Analyze and answer this weather-related query: {query}\n"
+                f"Additional context: {context_str}\n"
+                "Use the available tools to gather relevant weather data. "
+                "Include temperature, wind conditions, visibility, maritime state, "
+                "and any severe weather warnings."
+            ),
+            expected_output=(
+                "Comprehensive meteorological assessment including current conditions, "
+                "forecasts, hazards, and operational impact analysis."
+            ),
+            agent=self.crew_agent,
+        )
+
+        crew = Crew(agents=[self.crew_agent], tasks=[task], verbose=True, respect_context_window=True, function_calling_llm=_get_tool_calling_llm())
+
         try:
-            result = self.tool_predictor(
-                query=query,
-                context=json.dumps(context) if context else 'None',
-                extracted_locations=str(locations),
-                extracted_coordinates=str(coordinates)
-            )
-            decision = result.output.model_dump() if hasattr(result.output, 'model_dump') else result.output.dict()
+            crew_result = crew.kickoff()
+            raw_output = str(crew_result)
         except Exception as e:
-            print(f"⚠️ DSPy tool selection failed: {e}")
-            decision = {
-                "selected_tools": ["vector_search"],
-                "parameters": {"vector_search": {"query": query}},
-                "reasoning": "Default fallback"
-            }
-        
-        # Execute selected tools
-        tool_results = {}
-        
-        for tool_name in decision.get("selected_tools", []):
-            params = decision.get("parameters", {}).get(tool_name, {})
-            
-            try:
-                if tool_name == "get_current_weather":
-                    lat = params.get("lat", 0)
-                    lon = params.get("lon", 0)
-                    tool_results[tool_name] = self.api_tool.get_current_weather(lat, lon)
-                
-                elif tool_name == "get_weather_by_city":
-                    city = params.get("city", "")
-                    country = params.get("country_code")
-                    tool_results[tool_name] = self.api_tool.get_weather_by_city(city, country)
-                
-                elif tool_name == "get_forecast":
-                    lat = params.get("lat", 0)
-                    lon = params.get("lon", 0)
-                    days = params.get("days")
-                    tool_results[tool_name] = self.api_tool.get_forecast(lat, lon, days)
-                
-                elif tool_name == "get_weather_events_by_type":
-                    event_type = params.get("type", "")
-                    tool_results[tool_name] = self.sql_tool.get_weather_events_by_type(event_type, params.get("limit"))
-                
-                elif tool_name == "get_weather_events_in_area":
-                    tool_results[tool_name] = self.sql_tool.get_weather_events_in_area(
-                        params.get("lat_min", 0),
-                        params.get("lat_max", 0),
-                        params.get("lon_min", 0),
-                        params.get("lon_max", 0),
-                        params.get("limit")
-                    )
-                
-                elif tool_name == "vector_search":
-                    search_query = params.get("query", query)
-                    search_results = self.vector_db.search("weather", search_query, n_results=10)
-                    tool_results[tool_name] = {
-                        "documents": search_results["documents"],
-                        "metadatas": search_results["metadatas"]
-                    }
-            
-            except Exception as e:
-                tool_results[tool_name] = {"error": str(e)}
-        
-        # Analyze weather severity
-        severity_analysis = self._analyze_severity(tool_results)
-        
-        # Generate final response
+            print(f"⚠️ CrewAI weather execution failed: {e}")
+            print("🔄 Falling back to direct tool queries...")
+            raw_output = self._fallback_direct_query(query)
+
+        # Analyze severity from raw output
+        severity_analysis = self._analyze_severity_from_output(raw_output)
+
+        # Use DSPy for structured response generation
         try:
-            result = self.response_predictor(
+            dspy_result = self.response_predictor(
                 query=query,
-                weather_data=json.dumps(tool_results, default=str),
-                severity_analysis=json.dumps(severity_analysis)
+                weather_data=raw_output,
+                severity_analysis=json.dumps(severity_analysis),
             )
-            final_answer = result.response
+            answer = dspy_result.response
         except Exception as e:
-            print(f"⚠️ DSPy response generation failed: {e}")
-            final_answer = f"Error generating meteorological response: {e}\nRaw Analysis: {json.dumps(severity_analysis)}"
-        
+            print(f"⚠️ DSPy weather response generation failed: {e}")
+            answer = raw_output
+
         return {
             "agent": "weather",
             "query": query,
-            "tool_selection": decision,
-            "tool_results": tool_results,
+            "answer": answer,
+            "raw_output": raw_output,
             "severity_analysis": severity_analysis,
-            "answer": final_answer,
-            "data_count": len(tool_results)
+            "data_count": 1,
+            "status": "success" if "Error" not in raw_output else "partial",
         }
-    
-    def _analyze_severity(self, tool_results: Dict) -> Dict[str, Any]:
-        """
-        Analyze weather severity from retrieved data
-        
-        Returns:
-            Severity assessment dictionary
-        """
+
+    def _analyze_severity_from_output(self, raw_output: str) -> Dict[str, Any]:
+        """Basic severity analysis from raw tool output."""
         severity = {
             "level": "normal",
             "warnings": [],
             "flight_impact": "minimal",
-            "hazards": []
+            "hazards": [],
         }
-        
-        # Check current weather
-        for tool_name, data in tool_results.items():
-            if "current_weather" in tool_name or "weather_by_city" in tool_name:
-                if isinstance(data, dict) and "error" not in data:
-                    # Wind check
-                    wind_speed = data.get("wind_speed", 0)
-                    if wind_speed > 50:
-                        severity["warnings"].append(f"High winds: {wind_speed} km/h")
-                        severity["level"] = "high"
-                        severity["hazards"].append("Strong winds")
-                    
-                    # Visibility check
-                    visibility = data.get("visibility", 10000)
-                    if visibility < 1000:
-                        severity["warnings"].append(f"Low visibility: {visibility}m")
-                        severity["level"] = "high"
-                        severity["hazards"].append("Poor visibility")
-                    
-                    # Weather type check
-                    weather = data.get("weather", "").lower()
-                    if any(w in weather for w in ["storm", "thunder", "tornado"]):
-                        severity["warnings"].append(f"Severe weather: {weather}")
-                        severity["level"] = "critical"
-                        severity["hazards"].append("Severe weather system")
-                        severity["flight_impact"] = "severe"
-                    
-                    # Temperature extremes
-                    temp = data.get("temperature", 20)
-                    if temp < -20:
-                        severity["warnings"].append(f"Extreme cold: {temp}°C")
-                        severity["hazards"].append("Extreme cold")
-                    elif temp > 40:
-                        severity["warnings"].append(f"Extreme heat: {temp}°C")
-                        severity["hazards"].append("Extreme heat")
-        
-        if severity["warnings"]:
-            severity["flight_impact"] = "moderate" if severity["level"] == "normal" else "severe"
-        
+
+        output_lower = raw_output.lower()
+        if any(w in output_lower for w in ["storm", "thunder", "tornado", "hurricane", "cyclone"]):
+            severity["level"] = "critical"
+            severity["hazards"].append("Severe weather system")
+            severity["flight_impact"] = "severe"
+        elif any(w in output_lower for w in ["high wind", "strong wind", "gale"]):
+            severity["level"] = "high"
+            severity["hazards"].append("Strong winds")
+            severity["flight_impact"] = "moderate"
+        elif any(w in output_lower for w in ["fog", "low visibility", "icing"]):
+            severity["level"] = "moderate"
+            severity["hazards"].append("Visibility or icing hazard")
+            severity["flight_impact"] = "moderate"
+
         return severity
-    
+
+    def _fallback_direct_query(self, query: str) -> str:
+        """Bypass CrewAI and call tools directly when LLM tool calling fails."""
+        results = []
+        q = query.lower()
+
+        try:
+            vr = self.vector_db.search("weather", query, n_results=5)
+            docs = vr.get("documents", [])
+            if docs and docs[0]:
+                flat = docs[0] if isinstance(docs[0], list) else docs
+                results.append("Weather knowledge base:\n" + "\n".join(str(d) for d in flat[:5]))
+        except Exception:
+            pass
+
+        city_names = []
+        for city in ["mangalore", "udupi", "london", "new york", "mumbai",
+                      "delhi", "bangalore", "chennai", "kolkata", "hyderabad"]:
+            if city in q:
+                city_names.append(city)
+
+        for city in city_names:
+            try:
+                weather = self.api_tool.get_weather_by_city(city)
+                if weather and "error" not in weather:
+                    results.append(f"Weather for {city}:\n" + json.dumps(weather, default=str))
+            except Exception:
+                pass
+
+        if not city_names:
+            try:
+                weather = self.api_tool.get_current_weather(12.9141, 74.8560)
+                if weather and "error" not in weather:
+                    results.append("Current weather (Mangalore):\n" + json.dumps(weather, default=str))
+            except Exception:
+                pass
+
+        try:
+            forecasts = self.forecast_sql.get_latest_forecasts(limit=10)
+            if forecasts:
+                results.append("Latest forecasts:\n" + json.dumps(forecasts[:5], default=str))
+        except Exception:
+            pass
+
+        try:
+            rainfall = self.rainfall_sql.get_latest_rainfall(limit=10)
+            if rainfall:
+                results.append("Latest rainfall:\n" + json.dumps(rainfall[:5], default=str))
+        except Exception:
+            pass
+
+        if any(w in q for w in ["landslide", "slope", "risk", "lhasa"]):
+            try:
+                snapshot = self.landslide_sql.get_latest_snapshot(limit=10)
+                if snapshot:
+                    results.append("Landslide snapshot:\n" + json.dumps(snapshot[:5], default=str))
+            except Exception:
+                pass
+
+        return "\n\n".join(results) if results else "No weather data available for this query."
+
+    # ── Helper methods ──────────────────────────────────────────────────────
+
     def get_weather_for_location(self, lat: float, lon: float) -> Dict:
-        """Helper method to get weather for coordinates"""
         return self.api_tool.get_current_weather(lat, lon)
-    
+
     def get_weather_for_disaster_area(self, lat: float, lon: float) -> Dict:
-        """Get weather conditions in disaster area"""
         current = self.api_tool.get_current_weather(lat, lon)
         forecast = self.api_tool.get_forecast(lat, lon, days=3)
-        
         return {
             "current": current,
             "forecast": forecast,
-            "severity": self._analyze_severity({"current": current})
+            "severity": self._analyze_severity_from_output(json.dumps(current, default=str)),
         }
 
 
 if __name__ == "__main__":
-    # Test weather agent
     db = DatabaseManager()
     vector_db = VectorDBManager()
     agent = WeatherAgent(db, vector_db)
-    
+
     result = agent.process("What's the weather in London?")
     print(json.dumps(result, indent=2, default=str))

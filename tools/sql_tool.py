@@ -318,3 +318,170 @@ class DisasterSQLTool:
             LIMIT ?
         """
         return self.db.execute_query(query, (limit,))
+
+
+# ======================================================================
+# New SQL tool classes for ingested external data sources
+# ======================================================================
+
+class AlertsSQLTool:
+    """SQL queries for official alerts (SACHET / NDMA)."""
+
+    def __init__(self, db_manager: DatabaseManager):
+        self.db = db_manager
+
+    def get_latest_alerts(self, limit: int = 50, district: str = None) -> List[Dict]:
+        return self.db.get_latest_alerts(limit=limit, district=district)
+
+    def get_alerts_by_severity(self, severity: str, limit: int = 50) -> List[Dict]:
+        limit = max(1, min(int(limit), 500))
+        query = """
+            SELECT * FROM official_alerts
+            WHERE severity = ?
+            ORDER BY issued_at DESC
+            LIMIT ?
+        """
+        return self.db.execute_query(query, (severity, limit))
+
+    def get_active_alerts(self, limit: int = 50) -> List[Dict]:
+        limit = max(1, min(int(limit), 500))
+        query = """
+            SELECT * FROM official_alerts
+            WHERE status IN ('Actual', 'active', 'Alert')
+              AND (expires_at IS NULL OR expires_at > datetime('now'))
+            ORDER BY issued_at DESC
+            LIMIT ?
+        """
+        return self.db.execute_query(query, (limit,))
+
+
+class ForecastSQLTool:
+    """SQL queries for Open-Meteo forecast signals."""
+
+    def __init__(self, db_manager: DatabaseManager):
+        self.db = db_manager
+
+    def get_latest_forecasts(self, limit: int = 100, location: str = None) -> List[Dict]:
+        return self.db.get_latest_forecasts(limit=limit, location=location)
+
+    def get_high_precipitation_forecasts(self, threshold: float = 5.0,
+                                          limit: int = 50) -> List[Dict]:
+        limit = max(1, min(int(limit), 500))
+        query = """
+            SELECT * FROM forecast_signals_hot
+            WHERE precipitation >= ?
+            ORDER BY forecast_time DESC
+            LIMIT ?
+        """
+        return self.db.execute_query(query, (threshold, limit))
+
+    def get_forecasts_for_location(self, location: str, limit: int = 48) -> List[Dict]:
+        limit = max(1, min(int(limit), 200))
+        query = """
+            SELECT * FROM forecast_signals_hot
+            WHERE location_name = ?
+            ORDER BY forecast_time ASC
+            LIMIT ?
+        """
+        return self.db.execute_query(query, (location, limit))
+
+
+class RainfallSQLTool:
+    """SQL queries for GPM IMERG rainfall observations."""
+
+    def __init__(self, db_manager: DatabaseManager):
+        self.db = db_manager
+
+    def get_latest_rainfall(self, limit: int = 50) -> List[Dict]:
+        return self.db.get_latest_rainfall(limit=limit)
+
+    def get_heavy_rainfall(self, threshold: float = 10.0, limit: int = 50) -> List[Dict]:
+        limit = max(1, min(int(limit), 500))
+        query = """
+            SELECT * FROM rainfall_observations
+            WHERE rainfall_mm >= ?
+            ORDER BY observation_time DESC
+            LIMIT ?
+        """
+        return self.db.execute_query(query, (threshold, limit))
+
+
+class LandslideSQLTool:
+    """SQL queries for LHASA landslide nowcast snapshot."""
+
+    def __init__(self, db_manager: DatabaseManager):
+        self.db = db_manager
+
+    def get_latest_snapshot(self, limit: int = 50) -> List[Dict]:
+        return self.db.get_latest_landslide_snapshot(limit=limit)
+
+    def get_high_risk_cells(self, limit: int = 50) -> List[Dict]:
+        limit = max(1, min(int(limit), 500))
+        query = """
+            SELECT * FROM landslide_snapshot_current
+            WHERE risk_level IN ('high', 'very_high', 'critical')
+               OR probability >= 0.7
+            ORDER BY probability DESC
+            LIMIT ?
+        """
+        return self.db.execute_query(query, (limit,))
+
+
+class ExternalEventsSQLTool:
+    """SQL queries for GDACS external events."""
+
+    def __init__(self, db_manager: DatabaseManager):
+        self.db = db_manager
+
+    def get_latest_events(self, limit: int = 50, event_type: str = None) -> List[Dict]:
+        return self.db.get_latest_external_events(limit=limit, event_type=event_type)
+
+    def get_events_by_severity(self, severity: str, limit: int = 50) -> List[Dict]:
+        limit = max(1, min(int(limit), 500))
+        query = """
+            SELECT * FROM external_events
+            WHERE severity = ?
+            ORDER BY event_date DESC
+            LIMIT ?
+        """
+        return self.db.execute_query(query, (severity, limit))
+
+
+class CycloneSQLTool:
+    """SQL queries for IBTrACS historical cyclones."""
+
+    def __init__(self, db_manager: DatabaseManager):
+        self.db = db_manager
+
+    def get_cyclones_in_basin(self, basin: str = "NI", limit: int = 50) -> List[Dict]:
+        limit = max(1, min(int(limit), 500))
+        query = """
+            SELECT * FROM historical_cyclones
+            WHERE basin = ?
+            ORDER BY iso_time DESC
+            LIMIT ?
+        """
+        return self.db.execute_query(query, (basin, limit))
+
+    def get_cyclones_near_region(self, lat_min: float = 12.5, lat_max: float = 13.6,
+                                  lon_min: float = 74.5, lon_max: float = 75.4,
+                                  limit: int = 50) -> List[Dict]:
+        limit = max(1, min(int(limit), 500))
+        query = """
+            SELECT * FROM historical_cyclones
+            WHERE lat BETWEEN ? AND ?
+              AND lon BETWEEN ? AND ?
+            ORDER BY iso_time DESC
+            LIMIT ?
+        """
+        return self.db.execute_query(query, (lat_min, lat_max, lon_min, lon_max, limit))
+
+    def get_intense_cyclones(self, min_wind_kt: float = 64, limit: int = 50) -> List[Dict]:
+        limit = max(1, min(int(limit), 500))
+        query = """
+            SELECT * FROM historical_cyclones
+            WHERE wind_kt >= ?
+            ORDER BY wind_kt DESC
+            LIMIT ?
+        """
+        return self.db.execute_query(query, (min_wind_kt, limit))
