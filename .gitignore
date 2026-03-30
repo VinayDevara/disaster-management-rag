@@ -26,4 +26,4 @@ data/chromadb/
 # --- OS Generated Files ---
 .DS_Store
 Thumbs.db
-.env.example
+.env.exampledata/raw_payloads/

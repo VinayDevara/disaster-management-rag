@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import type { User } from '@supabase/supabase-js';
 import { redirect } from 'next/navigation';
 import DisasterStatusOverview from '@/components/DisasterStatusOverview';
 import AdvancedVisualizations from '@/components/AdvancedVisualizations';
@@ -9,9 +10,10 @@ import ChatHistorySidebar from '@/components/ChatHistorySidebar';
 import ChatInterface from '@/components/ChatInterface';
 import ChatModal from '@/components/ChatModal';
 import TopNavigation from '@/components/TopNavigation';
+import SocialSignalsPanel from '@/components/SocialSignalsPanel';
 
 export default function DashboardPage() {
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [chatModalOpen, setChatModalOpen] = useState(false);
@@ -96,7 +98,12 @@ export default function DashboardPage() {
               <h2 className="text-2xl font-bold mb-6 text-gray-900 dark:text-gray-100">Analytics & Insights</h2>
               <AdvancedVisualizations />
             </section>
-
+            <section>
+            <h2 className="text-2xl font-bold mb-6 text-gray-900 dark:text-gray-100">
+              Live Social & News Signals
+            </h2>
+            <SocialSignalsPanel />
+          </section>
             {/* Chat Interface */}
             <section>
               <h2 className="text-2xl font-bold mb-6 text-gray-900 dark:text-gray-100">AI Disaster Assistant</h2>
