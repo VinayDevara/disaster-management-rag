@@ -325,12 +325,14 @@ export default function SocialSignalsPanel() {
   return (
     <div className="rounded-3xl border border-slate-800/80 bg-slate-950/40 backdrop-blur-sm p-6 shadow-[0_0_30px_rgba(0,0,0,0.25)]">
       <div className="flex flex-col gap-4 mb-6 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h3 className="text-2xl font-bold text-white">Live Disaster & Weather Signals</h3>
-          <p className="text-sm text-slate-400 mt-1">
-            Region-filtered disaster and weather news for situational awareness
-          </p>
-        </div>
+       <div>
+      <h3 className="text-2xl font-bold text-slate-900 dark:text-white">
+        Live Disaster & Weather Signals
+      </h3>
+      <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
+        Region-filtered disaster and weather news for situational awareness
+      </p>
+    </div>
 
         <div className="flex flex-wrap gap-3">
           <button
