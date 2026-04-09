@@ -1,299 +1,378 @@
 """
-Orchestrator Agent - Routes queries to specialized agents
-Classifies complex queries and coordinates multi-agent responses
+Orchestrator Agent - Central Hub Pattern
+Routes queries, manages agent execution with retry logic,
+evaluates results for re-invocation, and falls back to FlightAgent if needed.
 """
 from typing import Dict, List, Any, Optional
 from utils.llm_client import get_llm_client
+from agents.dspy_signatures import (
+    ClassifyQuery,
+    DecomposeQuery,
+    EvaluateResults,
+)
+from config.config import Config
 import json
 import dspy
-from pydantic import BaseModel, Field
+from datetime import datetime
 
-class ClassificationOutput(BaseModel):
-    query_type: str = Field(description="'simple' or 'complex'")
-    primary_agent: str = Field(description="'flight', 'weather', or 'disaster'")
-    secondary_agents: list[str] = Field(description="List of secondary agents needed")
-    requires_cross_intelligence: bool = Field(description="True if multiple domains need to correlate")
-    reasoning: str = Field(description="Explanation for classification")
 
-class ClassifyQuery(dspy.Signature):
-    """Classify user queries for a disaster management system.
-
-1. FLIGHT AGENT - Flight tracking and ADS-B data, aircraft surveillance.
-2. WEATHER AGENT - Current weather, forecasts, severe weather, maritime conditions.
-3. DISASTER AGENT - Natural disasters, urban evacuation plans, emergency logistics.
-
-Query Classification Guidelines:
-- SIMPLE queries need ONE agent
-- COMPLEX queries need MULTIPLE agents
-- Cross-intelligence queries require correlation between domains
-
-Examples:
-- "What flights are near Los Angeles?" -> Flight Agent only
-- "Show active wildfires" -> Disaster Agent only
-- "Are flights affected by California wildfires?" -> Flight + Disaster (complex)
-- "What's the weather in the hurricane zone and are flights diverted?" -> Weather + Flight (complex)
-"""
-    query: str = dspy.InputField(desc="The user query to classify")
-    output: ClassificationOutput = dspy.OutputField()
-
-class SubqueriesOutput(BaseModel):
-    flight: str = Field(description="Specific flight question, or empty string if not needed", default="")
-    weather: str = Field(description="Specific weather question, or empty string if not needed", default="")
-    disaster: str = Field(description="Specific disaster question, or empty string if not needed", default="")
-
-class DecomposeQuery(dspy.Signature):
-    """Break down this complex query into specific sub-queries for each agent. Create focused sub-queries that each agent can answer independently."""
-    query: str = dspy.InputField(desc="Original user query")
-    primary_agent: str = dspy.InputField()
-    secondary_agents: str = dspy.InputField()
-    output: SubqueriesOutput = dspy.OutputField()
 class OrchestratorAgent:
     """
-    Orchestration layer that:
-    1. Classifies user queries
-    2. Routes to appropriate specialized agents
-    3. Coordinates multi-domain queries
-    4. Manages agent communication
+    Central hub orchestrator that:
+    1. Classifies and decomposes user queries (DSPy)
+    2. Actively invokes sub-agents (not just planning)
+    3. Can re-invoke agents with refined queries based on intermediate results
+    4. Retries failed agent calls (configurable MAX_RETRIES)
+    5. Falls back to FlightAgent as backup orchestrator if primary fails
     """
-    
-    def __init__(self):
+
+    MAX_RETRIES = int(getattr(Config, "MAX_RETRIES", 2))
+    MAX_REINVOCATIONS = int(getattr(Config, "MAX_REINVOCATIONS", 2))
+
+    def __init__(self, flight_agent, weather_agent, disaster_agent, consensus_agent):
         self.llm = get_llm_client()
+
+        # Agent registry — orchestrator holds direct connections to every sub-agent
+        self.agents = {
+            "flight": flight_agent,
+            "weather": weather_agent,
+            "disaster": disaster_agent,
+        }
+        self.consensus_agent = consensus_agent
+
+        # DSPy predictors for structured decisions
         self.classify_predictor = dspy.Predict(ClassifyQuery)
         self.decompose_predictor = dspy.Predict(DecomposeQuery)
-        
-        self.system_prompt = """You are an Orchestrator Agent for a disaster management system.
+        self.evaluate_predictor = dspy.Predict(EvaluateResults)
 
-Your role is to analyze user queries and route them to the appropriate specialized agents:
+    # ── Public entry point ──────────────────────────────────────────────────
 
-1. FLIGHT AGENT - Handles:
-   - Flight tracking and ADS-B data
-   - Aircraft positions and trajectories
-   - Emergency flight situations
-   - Flight diversions and delays
-   - Aviation safety queries
-
-2. WEATHER AGENT - Handles:
-   - Current weather conditions
-   - Weather forecasts
-   - Severe weather events
-   - Meteorological data
-   - Weather impact on operations
-
-3. DISASTER AGENT - Handles:
-   - Natural disaster events
-   - Wildfires, earthquakes, floods, storms
-   - Disaster impact assessment
-   - Emergency situations
-   - Disaster location and severity
-
-Query Classification Guidelines:
-- SIMPLE queries need ONE agent
-- COMPLEX queries need MULTIPLE agents
-- Cross-intelligence queries require correlation between domains
-
-Examples:
-- "What flights are near Los Angeles?" → Flight Agent only
-- "Show active wildfires" → Disaster Agent only
-- "Are there flights affected by the California wildfires?" → Flight + Disaster (complex)
-- "What's the weather in the hurricane zone and are flights diverted?" → Weather + Flight (complex)
-
-Return JSON with:
-{{
-  "query_type": "simple" or "complex",
-  "primary_agent": "flight|weather|disaster",
-  "secondary_agents": ["agent1", "agent2"],
-  "requires_cross_intelligence": true/false,
-  "reasoning": "explanation",
-  "extracted_entities": {{
-    "locations": [],
-    "flight_numbers": [],
-    "disaster_types": [],
-    "coordinates": []
-  }}
-}}
-"""
-    
-    def classify_query(self, query: str) -> Dict[str, Any]:
+    def process_query(self, query: str) -> Dict[str, Any]:
         """
-        Classify and route query to appropriate agents
-        
-        Args:
-            query: User query
-            
-        Returns:
-            Classification and routing information
+        Main entry point.  Runs the hub loop; on failure falls back to
+        FlightAgent acting as a simplified orchestrator.
         """
-        print(f"🎯 Orchestrator classifying query: {query}")
-        
+        try:
+            return self._hub_process(query)
+        except Exception as e:
+            print(f"⚠️ Primary orchestrator failed: {e}")
+            print("🔄 Falling back to Flight Agent as backup orchestrator...")
+            return self._fallback_process(query, str(e))
+
+    # ── Core hub loop ───────────────────────────────────────────────────────
+
+    def _hub_process(self, query: str) -> Dict[str, Any]:
+        start_time = datetime.now()
+
+        # 1 ── Classify
+        print(f"\n🎯 Orchestrator classifying query: {query}")
+        classification = self._classify_query(query)
+
+        print(f"📋 Classification:")
+        print(f"   Type: {classification['query_type']}")
+        print(f"   Primary Agent: {classification['primary_agent']}")
+        print(f"   Secondary Agents: {classification.get('secondary_agents', [])}")
+        print(f"   Cross-Intelligence: {classification.get('requires_cross_intelligence', False)}")
+
+        # 2 ── Decompose into sub-queries
+        sub_queries = self._decompose_query(query, classification)
+        print(f"📝 Sub-queries: {list(sub_queries.keys())}")
+
+        # 3 ── Execute each agent with retry
+        print("\n⚡ Executing agents...")
+        agent_results: Dict[str, Any] = {}
+        execution_order = self._get_execution_order(classification, sub_queries)
+
+        for agent_name in execution_order:
+            sub_query = sub_queries.get(agent_name, query)
+            context = self._build_context(classification, agent_results)
+            result = self._execute_with_retry(agent_name, sub_query, context)
+            agent_results[agent_name] = result
+
+        # 4 ── Evaluate — decide if any agent needs re-invocation
+        reinvocations = self._evaluate_and_reinvoke(query, agent_results, classification)
+        for agent_name, refined_query in reinvocations.items():
+            print(f"   🔁 Re-invoking {agent_name.title()} Agent: {refined_query[:60]}...")
+            context = self._build_context(classification, agent_results)
+            result = self._execute_with_retry(agent_name, refined_query, context)
+            agent_results[agent_name] = result  # update with refined result
+
+        # 5 ── Consensus if multi-agent and cross-intelligence required
+        requires_consensus = (
+            len(agent_results) > 1
+            and classification.get("requires_cross_intelligence", False)
+        )
+
+        if requires_consensus:
+            print("\n🤝 Running consensus analysis...")
+            final_response = self._execute_consensus(query, agent_results, classification)
+        else:
+            primary = classification["primary_agent"]
+            final_response = agent_results.get(primary, next(iter(agent_results.values()), {}))
+
+        end_time = datetime.now()
+        execution_time = (end_time - start_time).total_seconds()
+        print(f"\n✅ Query processing complete in {execution_time:.2f}s\n")
+
+        return {
+            "query": query,
+            "timestamp": start_time.isoformat(),
+            "execution_time_seconds": execution_time,
+            "classification": classification,
+            "agent_results": agent_results,
+            "final_response": final_response,
+            "metadata": {
+                "query_type": classification["query_type"],
+                "agents_used": list(agent_results.keys()),
+                "consensus_applied": requires_consensus,
+                "orchestrator": "primary",
+            },
+        }
+
+    # ── Classification & decomposition ──────────────────────────────────────
+
+    def _classify_query(self, query: str) -> Dict[str, Any]:
+        """Classify query using DSPy structured prediction."""
         try:
             result = self.classify_predictor(query=query)
-            classification = result.output.model_dump() if hasattr(result.output, 'model_dump') else result.output.dict()
+            classification = (
+                result.output.model_dump()
+                if hasattr(result.output, "model_dump")
+                else result.output.dict()
+            )
             classification["extracted_entities"] = {}
         except Exception as e:
-            # Fallback classification
             print(f"⚠️ DSPy classification failed: {e}")
             classification = {
                 "query_type": "simple",
                 "primary_agent": "flight",
                 "secondary_agents": [],
                 "requires_cross_intelligence": False,
-                "reasoning": "Failed to parse classification, defaulting to flight agent",
-                "extracted_entities": {}
+                "reasoning": f"Classification failed ({e}), defaulting to flight agent",
+                "extracted_entities": {},
             }
-        
-        # Validate and sanitize classification
+
+        # Validate
         valid_agents = ["flight", "weather", "disaster"]
-        
         if classification.get("primary_agent") not in valid_agents:
             classification["primary_agent"] = "flight"
-        
         classification["secondary_agents"] = [
-            agent for agent in classification.get("secondary_agents", [])
-            if agent in valid_agents and agent != classification["primary_agent"]
+            a
+            for a in classification.get("secondary_agents", [])
+            if a in valid_agents and a != classification["primary_agent"]
         ]
-        
+
         return classification
-    
-    def decompose_complex_query(self, query: str, classification: Dict) -> Dict[str, str]:
-        """
-        Decompose complex query into sub-queries for each agent
-        
-        Args:
-            query: Original user query
-            classification: Query classification
-            
-        Returns:
-            Dictionary mapping agent names to their specific sub-queries
-        """
+
+    def _decompose_query(self, query: str, classification: Dict) -> Dict[str, str]:
+        """Decompose complex query into agent-specific sub-queries."""
         if classification.get("query_type") == "simple":
             return {classification["primary_agent"]: query}
-        
+
         try:
             result = self.decompose_predictor(
                 query=query,
-                primary_agent=classification['primary_agent'],
-                secondary_agents=str(classification.get('secondary_agents', []))
+                primary_agent=classification["primary_agent"],
+                secondary_agents=str(classification.get("secondary_agents", [])),
             )
-            sub_q = result.output.model_dump() if hasattr(result.output, 'model_dump') else result.output.dict()
-            # Filter out empty strings
+            sub_q = (
+                result.output.model_dump()
+                if hasattr(result.output, "model_dump")
+                else result.output.dict()
+            )
             sub_queries = {k: v for k, v in sub_q.items() if v and isinstance(v, str) and v.strip()}
             if not sub_queries:
-                raise ValueError("No subqueries extracted")
+                raise ValueError("No sub-queries extracted")
         except Exception as e:
             print(f"⚠️ DSPy decomposition failed: {e}")
             agents = [classification["primary_agent"]] + classification.get("secondary_agents", [])
             sub_queries = {agent: query for agent in agents}
-        
+
         return sub_queries
-    
-    def route_query(self, query: str) -> Dict[str, Any]:
-        """
-        Complete routing process: classify, decompose, and prepare execution
-        
-        Args:
-            query: User query
-            
-        Returns:
-            Routing plan with classification and sub-queries
-        """
-        # Step 1: Classify
-        classification = self.classify_query(query)
-        
-        print(f"📋 Classification:")
-        print(f"   Type: {classification['query_type']}")
-        print(f"   Primary Agent: {classification['primary_agent']}")
-        print(f"   Secondary Agents: {classification.get('secondary_agents', [])}")
-        print(f"   Cross-Intelligence: {classification.get('requires_cross_intelligence', False)}")
-        
-        # Step 2: Decompose if complex
-        if classification.get("query_type") == "complex":
-            sub_queries = self.decompose_complex_query(query, classification)
-            print(f"📝 Sub-queries: {list(sub_queries.keys())}")
-        else:
-            sub_queries = {classification["primary_agent"]: query}
-        
-        # Step 3: Create routing plan
-        routing_plan = {
-            "original_query": query,
-            "classification": classification,
-            "sub_queries": sub_queries,
-            "execution_order": self._determine_execution_order(classification, sub_queries),
-            "requires_consensus": classification.get("requires_cross_intelligence", False)
+
+    # ── Agent execution with retry ──────────────────────────────────────────
+
+    def _execute_with_retry(
+        self,
+        agent_name: str,
+        query: str,
+        context: Optional[Dict] = None,
+    ) -> Dict[str, Any]:
+        """Execute an agent with retry logic."""
+        last_error = None
+
+        for attempt in range(self.MAX_RETRIES + 1):
+            prefix = "🔄" if attempt > 0 else "→"
+            print(f"   {prefix} {agent_name.title()} Agent (attempt {attempt + 1}): {query[:60]}...")
+
+            try:
+                result = self.agents[agent_name].process(query, context)
+
+                # Check if result is usable
+                answer = str(result.get("answer", ""))
+                has_data = (result.get("data_count", 0) or result.get("event_count", 0)) > 0
+
+                if answer and "Error" not in answer:
+                    data_count = result.get("data_count", 0) or result.get("event_count", 0)
+                    print(f"     ✓ Retrieved {data_count} data points")
+                    return result
+
+                # Result has issues but may be partially usable
+                if attempt == self.MAX_RETRIES:
+                    print(f"     ⚠️ Returning partial result after {attempt + 1} attempts")
+                    result["status"] = "partial"
+                    return result
+
+                last_error = answer or "Empty response"
+                print(f"     ⚠️ Attempt {attempt + 1} returned errors, retrying...")
+
+            except Exception as e:
+                last_error = str(e)
+                print(f"     ✗ Attempt {attempt + 1} failed: {e}")
+
+                if attempt == self.MAX_RETRIES:
+                    return {
+                        "agent": agent_name,
+                        "query": query,
+                        "answer": f"Agent failed after {self.MAX_RETRIES + 1} attempts: {last_error}",
+                        "status": "failed",
+                        "data_count": 0,
+                    }
+
+        # Should not reach here, but just in case
+        return {
+            "agent": agent_name,
+            "query": query,
+            "answer": f"Agent exhausted retries: {last_error}",
+            "status": "failed",
+            "data_count": 0,
         }
-        
-        return routing_plan
-    
-    def _determine_execution_order(self, classification: Dict, sub_queries: Dict) -> List[str]:
+
+    # ── Consensus execution ─────────────────────────────────────────────────
+
+    def _execute_consensus(
+        self, query: str, agent_results: Dict[str, Any], classification: Dict
+    ) -> Dict[str, Any]:
+        """Execute consensus with retry."""
+        for attempt in range(self.MAX_RETRIES + 1):
+            try:
+                return self.consensus_agent.process(query, agent_results, classification)
+            except Exception as e:
+                print(f"     ⚠️ Consensus attempt {attempt + 1} failed: {e}")
+                if attempt == self.MAX_RETRIES:
+                    # Fall back to concatenating agent answers
+                    parts = []
+                    for name, result in agent_results.items():
+                        parts.append(f"### {name.capitalize()} Agent\n{result.get('answer', 'No data')}\n")
+                    return {
+                        "unified_response": "\n".join(parts),
+                        "status": "fallback",
+                        "error": str(e),
+                    }
+
+    # ── Result evaluation & re-invocation ───────────────────────────────────
+
+    def _evaluate_and_reinvoke(
+        self, query: str, results: Dict[str, Any], classification: Dict
+    ) -> Dict[str, str]:
         """
-        Determine optimal execution order for agents
-        
-        Some queries may have dependencies (e.g., get disaster location first,
-        then query flights in that area)
+        Evaluate agent results using DSPy and determine if any agent needs
+        re-invocation with a refined query.  Returns dict of agent_name → refined_query.
         """
-        execution_order = []
-        
-        # Primary agent first
+        if not classification.get("requires_cross_intelligence", False):
+            return {}
+
+        try:
+            results_summary = {
+                agent: {
+                    "has_answer": bool(r.get("answer")),
+                    "data_count": r.get("data_count", 0) or r.get("event_count", 0),
+                    "status": r.get("status", "unknown"),
+                    "answer_preview": str(r.get("answer", ""))[:300],
+                }
+                for agent, r in results.items()
+            }
+
+            eval_result = self.evaluate_predictor(
+                original_query=query,
+                agent_results=json.dumps(results_summary, default=str),
+                classification=json.dumps(classification, default=str),
+            )
+
+            decision = (
+                eval_result.output.model_dump()
+                if hasattr(eval_result.output, "model_dump")
+                else eval_result.output.dict()
+            )
+
+            if decision.get("needs_reinvocation"):
+                reinvocations = decision.get("reinvocations", {})
+                # Validate: only allow known agents, cap count
+                valid = {
+                    k: v
+                    for k, v in reinvocations.items()
+                    if k in self.agents and isinstance(v, str) and v.strip()
+                }
+                # Limit to MAX_REINVOCATIONS
+                return dict(list(valid.items())[: self.MAX_REINVOCATIONS])
+
+        except Exception as e:
+            print(f"⚠️ Result evaluation failed: {e}")
+
+        return {}
+
+    # ── Fallback orchestrator ───────────────────────────────────────────────
+
+    def _fallback_process(self, query: str, error_msg: str) -> Dict[str, Any]:
+        """Delegate to FlightAgent as backup orchestrator."""
+        return self.agents["flight"].process_as_orchestrator(
+            query, self.agents, self.consensus_agent, error_msg
+        )
+
+    # ── Helpers ─────────────────────────────────────────────────────────────
+
+    def _get_execution_order(
+        self, classification: Dict, sub_queries: Dict
+    ) -> List[str]:
+        """Determine optimal agent execution order."""
+        order = []
         primary = classification.get("primary_agent")
         if primary in sub_queries:
-            execution_order.append(primary)
-        
-        # Secondary agents
+            order.append(primary)
         for agent in classification.get("secondary_agents", []):
-            if agent in sub_queries and agent not in execution_order:
-                execution_order.append(agent)
-        
-        # Add any remaining agents from sub_queries
+            if agent in sub_queries and agent not in order:
+                order.append(agent)
         for agent in sub_queries:
-            if agent not in execution_order:
-                execution_order.append(agent)
-        
-        return execution_order
-    
-    def create_agent_context(
-        self,
-        query: str,
-        classification: Dict,
-        previous_results: Optional[Dict] = None
+            if agent not in order:
+                order.append(agent)
+        return order
+
+    def _build_context(
+        self, classification: Dict, previous_results: Optional[Dict] = None
     ) -> Dict:
-        """
-        Create context to pass to agents
-        
-        Args:
-            query: Query for this specific agent
-            classification: Overall classification
-            previous_results: Results from previously executed agents
-            
-        Returns:
-            Context dictionary
-        """
+        """Build context dict to pass to an agent."""
         context = {
-            "original_query": classification.get("original_query", query),
+            "original_query": classification.get("original_query", ""),
             "query_type": classification.get("query_type"),
             "entities": classification.get("extracted_entities", {}),
-            "cross_intelligence_required": classification.get("requires_cross_intelligence", False)
+            "cross_intelligence_required": classification.get(
+                "requires_cross_intelligence", False
+            ),
         }
-        
-        # Add relevant info from previous agents
         if previous_results:
-            context["previous_results"] = previous_results
-        
+            # Pass summaries of previous results to avoid huge payloads
+            context["previous_results"] = {
+                agent: {
+                    "answer_preview": str(r.get("answer", ""))[:500],
+                    "data_count": r.get("data_count", 0) or r.get("event_count", 0),
+                }
+                for agent, r in previous_results.items()
+            }
         return context
 
 
 if __name__ == "__main__":
-    # Test orchestrator
-    orchestrator = OrchestratorAgent()
-    
-    # Test simple query
-    print("=" * 80)
-    print("TEST 1: Simple Query")
-    print("=" * 80)
-    plan1 = orchestrator.route_query("Show me all emergency flights")
-    print(json.dumps(plan1, indent=2))
-    
-    # Test complex query
-    print("\n" + "=" * 80)
-    print("TEST 2: Complex Query")
-    print("=" * 80)
-    plan2 = orchestrator.route_query("Are there any flights near the California wildfires?")
-    print(json.dumps(plan2, indent=2))
+    # Quick smoke test (requires real agent instances)
+    print("Orchestrator module loaded successfully.")
+    orchestrator = OrchestratorAgent.__new__(OrchestratorAgent)
+    print("OrchestratorAgent class instantiation stub OK.")
