@@ -26,12 +26,21 @@ from datetime import datetime
 from colorama import Fore, Style, init
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Optional
+from supabase import create_client, Client
+
 
 app = FastAPI()
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
+supabase: Client | None = None
+if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
+    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[  "http://localhost:3000","http://127.0.0.1:3000","http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -289,7 +298,31 @@ async def _shutdown():
     if _system is not None:
         await _system.scheduler.stop()
 
+class FeedbackRequest(BaseModel):
+    rating: int
+    category: str
+    comment: str
+    page: Optional[str] = None
 
+
+@app.post("/api/feedback")
+async def submit_feedback(feedback: FeedbackRequest):
+    if supabase is None:
+        return {"error": "Supabase is not configured"}
+
+    feedback_data = {
+        "rating": feedback.rating,
+        "category": feedback.category,
+        "comment": feedback.comment,
+        "page": feedback.page,
+    }
+
+    response = supabase.table("feedback").insert(feedback_data).execute()
+
+    return {
+        "message": "Feedback submitted successfully",
+        "received": response.data
+    }
 # ── Debug / inspection endpoints ────────────────────────────────────────
 
 @app.get("/api/alerts/latest")
