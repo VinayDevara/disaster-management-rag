@@ -18,14 +18,15 @@ export async function POST(request: NextRequest) {
     const backendUrl = process.env.LLM_BACKEND_URL || 'http://localhost:8000';
     
     try {
-      const llmResponse = await fetch(`${backendUrl}/chat`, {
+      const llmResponse = await fetch(`${backendUrl}/api/query`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ question: message }),
+  body: JSON.stringify({ query: message }),
 });
 
 const llmData = await llmResponse.json();
-const response = llmData.answer || 'No response received';
+const finalResponse = llmData.final_response || {};
+const response = finalResponse.unified_response || finalResponse.answer || llmData.answer || 'No response received';
 
       // Save to chat history if sessionId provided
       if (sessionId) {

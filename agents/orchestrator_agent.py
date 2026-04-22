@@ -74,6 +74,11 @@ class OrchestratorAgent:
         print(f"   Secondary Agents: {classification.get('secondary_agents', [])}")
         print(f"   Cross-Intelligence: {classification.get('requires_cross_intelligence', False)}")
 
+        # 1a ── Short-circuit: general/conversational queries go straight to LLM
+        if classification["query_type"] == "general" or classification["primary_agent"] == "none":
+            print("💬 General query — responding directly via LLM (no agent)")
+            return self._handle_general_query(query, start_time)
+
         # 2 ── Decompose into sub-queries
         sub_queries = self._decompose_query(query, classification)
         print(f"📝 Sub-queries: {list(sub_queries.keys())}")
@@ -153,16 +158,25 @@ class OrchestratorAgent:
             }
 
         # Validate — normalize to lowercase first (DSPy may return uppercase)
-        valid_agents = ["flight", "weather", "disaster"]
+        valid_agents = ["flight", "weather", "disaster", "none"]
         primary = str(classification.get("primary_agent", "flight")).lower().strip()
-        if primary not in valid_agents:
-            primary = "flight"
-        classification["primary_agent"] = primary
+        query_type = str(classification.get("query_type", "simple")).lower().strip()
+
+        # If classified as general, force primary_agent to none
+        if query_type == "general":
+            classification["primary_agent"] = "none"
+            classification["query_type"] = "general"
+        else:
+            # For non-general queries, only flight/weather/disaster are valid
+            if primary not in ["flight", "weather", "disaster"]:
+                primary = "flight"
+            classification["primary_agent"] = primary
 
         classification["secondary_agents"] = [
             a.lower().strip()
             for a in classification.get("secondary_agents", [])
-            if a.lower().strip() in valid_agents and a.lower().strip() != primary
+            if a.lower().strip() in ["flight", "weather", "disaster"]
+            and a.lower().strip() != classification["primary_agent"]
         ]
 
         return classification
@@ -192,6 +206,48 @@ class OrchestratorAgent:
             sub_queries = {agent: query for agent in agents}
 
         return sub_queries
+
+    # ── General / conversational query handler ──────────────────────────────
+
+    def _handle_general_query(self, query: str, start_time) -> Dict[str, Any]:
+        """Respond to greetings and general questions directly via LLM — no agents."""
+        general_system = (
+            "You are DisasterRAG, an AI assistant for the Disaster Management Intelligence System. "
+            "You help users understand disasters, weather, and flight safety in India (especially Karnataka). "
+            "For greetings and general questions, respond warmly and concisely. "
+            "Let users know you can answer questions about: active disasters, weather conditions, "
+            "flight tracking, cyclone warnings, flood alerts, and emergency logistics. "
+            "Keep your response short and friendly."
+        )
+        try:
+            answer = self.llm.generate(query, system_prompt=general_system)
+        except Exception as e:
+            print(f"⚠️ General LLM call failed: {e}")
+            answer = (
+                "Hello! I'm DisasterRAG, your Disaster Management Intelligence System. "
+                "I can help you with:\n"
+                "- 🌪️ Active disasters and alerts\n"
+                "- 🌤️ Weather conditions and forecasts\n"
+                "- ✈️ Flight tracking and safety\n"
+                "- 🚨 Cyclone warnings and flood alerts\n\n"
+                "What would you like to know?"
+            )
+
+        end_time = datetime.now()
+        return {
+            "query": query,
+            "timestamp": start_time.isoformat(),
+            "execution_time_seconds": (end_time - start_time).total_seconds(),
+            "classification": {"query_type": "general", "primary_agent": "none"},
+            "agent_results": {},
+            "final_response": {"answer": answer},
+            "metadata": {
+                "query_type": "general",
+                "agents_used": [],
+                "consensus_applied": False,
+                "orchestrator": "direct_llm",
+            },
+        }
 
     # ── Agent execution with retry ──────────────────────────────────────────
 

@@ -9,8 +9,8 @@ from pydantic import BaseModel, Field
 # ─── Orchestrator Signatures ─────────────────────────────────────────────────
 
 class ClassificationOutput(BaseModel):
-    query_type: str = Field(description="'simple' or 'complex'")
-    primary_agent: str = Field(description="'flight', 'weather', or 'disaster'")
+    query_type: str = Field(description="'general', 'simple', or 'complex'")
+    primary_agent: str = Field(description="'flight', 'weather', 'disaster', or 'none' for general queries")
     secondary_agents: list[str] = Field(description="List of secondary agents needed")
     requires_cross_intelligence: bool = Field(description="True if multiple domains need to correlate")
     reasoning: str = Field(description="Explanation for classification")
@@ -19,20 +19,26 @@ class ClassificationOutput(BaseModel):
 class ClassifyQuery(dspy.Signature):
     """Classify user queries for a disaster management system.
 
+    0. GENERAL - Greetings, small talk, vague questions, or anything NOT about flights/weather/disasters.
+       Use this for: 'hi', 'hello', 'how are you', 'what can you do', 'thanks', 'help', etc.
+       Set primary_agent = 'none' for general queries.
+
     1. FLIGHT AGENT - Flight tracking and ADS-B data, aircraft surveillance.
     2. WEATHER AGENT - Current weather, forecasts, severe weather, maritime conditions.
     3. DISASTER AGENT - Natural disasters, urban evacuation plans, emergency logistics.
 
     Query Classification Guidelines:
+    - GENERAL queries do NOT need any agent — answer conversationally
     - SIMPLE queries need ONE agent
     - COMPLEX queries need MULTIPLE agents
-    - Cross-intelligence queries require correlation between domains
 
     Examples:
+    - "hi" -> general (primary_agent='none')
+    - "hello" -> general (primary_agent='none')
+    - "what can you do?" -> general (primary_agent='none')
     - "What flights are near Los Angeles?" -> Flight Agent only (simple)
     - "Show active wildfires" -> Disaster Agent only (simple)
     - "Are flights affected by California wildfires?" -> Flight + Disaster (complex)
-    - "What's the weather in the hurricane zone and are flights diverted?" -> Weather + Flight (complex)
     """
     query: str = dspy.InputField(desc="The user query to classify")
     output: ClassificationOutput = dspy.OutputField()
