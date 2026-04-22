@@ -11,6 +11,7 @@ import ChatInterface from '@/components/ChatInterface';
 import ChatModal from '@/components/ChatModal';
 import TopNavigation from '@/components/TopNavigation';
 import SocialSignalsPanel from '@/components/SocialSignalsPanel';
+import HelpUsImproveButton from "@/components/HelpUsImproveButton";
 
 export default function DashboardPage() {
   const [user, setUser] = useState<User | null>(null);
@@ -125,6 +126,7 @@ export default function DashboardPage() {
         selectedSessionId={selectedSessionId}
         onSessionSelected={handleSelectSession}
       />
+            <HelpUsImproveButton />
     </div>
   );
 }
