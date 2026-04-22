@@ -152,14 +152,17 @@ class OrchestratorAgent:
                 "extracted_entities": {},
             }
 
-        # Validate
+        # Validate — normalize to lowercase first (DSPy may return uppercase)
         valid_agents = ["flight", "weather", "disaster"]
-        if classification.get("primary_agent") not in valid_agents:
-            classification["primary_agent"] = "flight"
+        primary = str(classification.get("primary_agent", "flight")).lower().strip()
+        if primary not in valid_agents:
+            primary = "flight"
+        classification["primary_agent"] = primary
+
         classification["secondary_agents"] = [
-            a
+            a.lower().strip()
             for a in classification.get("secondary_agents", [])
-            if a in valid_agents and a != classification["primary_agent"]
+            if a.lower().strip() in valid_agents and a.lower().strip() != primary
         ]
 
         return classification

@@ -3,7 +3,7 @@ Weather Agent - CrewAI + DSPy Implementation
 Handles weather-related queries using CrewAI tools and DSPy structured output
 """
 from typing import Dict, List, Optional, Any
-from utils.llm_client import get_llm_client
+from utils.llm_client import get_llm_client, get_crewai_llm, get_crewai_tool_llm
 from utils.database import DatabaseManager
 from utils.vector_db import VectorDBManager
 from tools.sql_tool import WeatherSQLTool, ForecastSQLTool, RainfallSQLTool, LandslideSQLTool
@@ -14,28 +14,6 @@ import json
 import dspy
 from crewai import Agent, Task, Crew, LLM
 from crewai.tools import BaseTool
-
-
-def _get_crewai_llm():
-    return LLM(
-        model=f"groq/{Config.GROQ_MODEL}",
-        api_key=Config.GROQ_API_KEY,
-        temperature=Config.TEMPERATURE,
-        max_tokens=512,
-        num_retries=3,
-        timeout=120,
-    )
-
-
-def _get_tool_calling_llm():
-    return LLM(
-        model=f"groq/{Config.GROQ_TOOL_MODEL}",
-        api_key=Config.GROQ_API_KEY,
-        temperature=0.1,
-        max_tokens=512,
-        num_retries=3,
-        timeout=120,
-    )
 
 
 def create_weather_tools(
@@ -251,20 +229,19 @@ class WeatherAgent:
             role="Environment & Maritime Agent",
             goal=(
                 "Retrieve and analyze weather data for disaster management. "
-                "You MUST use the available tools to gather real data before answering. "
-                "Never answer from your own knowledge alone."
+                "ALWAYS use at least one tool to fetch real data before answering. "
+                "Never answer from your own knowledge alone — call a tool first."
             ),
             backstory=(
                 "You are an expert meteorologist and maritime analyst. "
-                "You ALWAYS call at least one tool to fetch real data before providing an answer. "
                 "You provide weather intelligence for disaster management operations, "
-                "including aviation impact assessment and severe weather identification."
+                "including rainfall, landslide risk, and severe weather identification."
             ),
             tools=self.tools,
-            llm=_get_crewai_llm(),
+            llm=get_crewai_llm(),
             verbose=True,
             max_retry_limit=3,
-            max_iter=3,
+            max_iter=5,
         )
 
         # DSPy for structured response generation
@@ -280,20 +257,22 @@ class WeatherAgent:
 
         task = Task(
             description=(
-                f"Analyze and answer this weather-related query: {query}\n"
-                f"Additional context: {context_str}\n"
-                "Use the available tools to gather relevant weather data. "
-                "Include temperature, wind conditions, visibility, maritime state, "
-                "and any severe weather warnings."
+                f"Weather query: {query}\n"
+                f"Context: {context_str}\n"
+                "Step 1: Call get_weather_by_city or get_current_weather to fetch real data.\n"
+                "Step 2: If rainfall or landslide risk is asked, also call get_gpm_rainfall or get_landslide_snapshot.\n"
+                "Step 3: Report temperature, wind, precipitation, warnings, and any severe hazards."
             ),
             expected_output=(
-                "Comprehensive meteorological assessment including current conditions, "
-                "forecasts, hazards, and operational impact analysis."
+                "Meteorological assessment with current conditions, hazards, "
+                "and operational impact for disaster management."
             ),
             agent=self.crew_agent,
         )
 
-        crew = Crew(agents=[self.crew_agent], tasks=[task], verbose=True, respect_context_window=True, function_calling_llm=_get_tool_calling_llm())
+        # Refresh the local LLM before each call so tool instructions stay current.
+        self.crew_agent.llm = get_crewai_llm()
+        crew = Crew(agents=[self.crew_agent], tasks=[task], verbose=True, respect_context_window=True, function_calling_llm=get_crewai_tool_llm())
 
         try:
             crew_result = crew.kickoff()

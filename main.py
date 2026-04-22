@@ -7,6 +7,9 @@ import sys
 import os
 from pathlib import Path
 
+os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
+os.environ.setdefault("USE_TF", "0")
+
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -28,15 +31,20 @@ from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
-from supabase import create_client, Client
+try:
+    from supabase import create_client, Client as _SupabaseClient
+    _SUPABASE_AVAILABLE = True
+except ImportError:
+    _SUPABASE_AVAILABLE = False
+    _SupabaseClient = None
 
 
 app = FastAPI()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
-supabase: Client | None = None
-if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
+supabase = None
+if _SUPABASE_AVAILABLE and SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
     supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 app.add_middleware(
     CORSMiddleware,

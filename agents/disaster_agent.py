@@ -3,7 +3,7 @@ Disaster Agent - CrewAI + DSPy Implementation
 Handles disaster event queries using CrewAI tools and DSPy structured output
 """
 from typing import Dict, List, Optional, Any
-from utils.llm_client import get_llm_client
+from utils.llm_client import get_llm_client, get_crewai_llm, get_crewai_tool_llm
 from utils.database import DatabaseManager
 from utils.vector_db import VectorDBManager
 from tools.sql_tool import DisasterSQLTool, AlertsSQLTool, ExternalEventsSQLTool, CycloneSQLTool
@@ -14,28 +14,6 @@ import json
 import dspy
 from crewai import Agent, Task, Crew, LLM
 from crewai.tools import BaseTool
-
-
-def _get_crewai_llm():
-    return LLM(
-        model=f"groq/{Config.GROQ_MODEL}",
-        api_key=Config.GROQ_API_KEY,
-        temperature=Config.TEMPERATURE,
-        max_tokens=512,
-        num_retries=3,
-        timeout=120,
-    )
-
-
-def _get_tool_calling_llm():
-    return LLM(
-        model=f"groq/{Config.GROQ_TOOL_MODEL}",
-        api_key=Config.GROQ_API_KEY,
-        temperature=0.1,
-        max_tokens=512,
-        num_retries=3,
-        timeout=120,
-    )
 
 
 def create_disaster_tools(
@@ -259,20 +237,19 @@ class DisasterAgent:
             role="Evacuation & Logistics Agent",
             goal=(
                 "Monitor and analyze disaster events for emergency management. "
-                "You MUST use the available tools to gather real data before answering. "
-                "Never answer from your own knowledge alone."
+                "ALWAYS use at least one tool to fetch real data before answering. "
+                "Never answer from your own knowledge alone — call a tool first."
             ),
             backstory=(
                 "You are an expert in disaster management and emergency logistics. "
-                "You ALWAYS call at least one tool to fetch real data before providing an answer. "
-                "You rapidly generate urban evacuation plans, assess disaster impact zones, "
-                "and plan comprehensive emergency logistics."
+                "You rapidly generate evacuation plans, assess disaster impact zones, "
+                "and plan emergency logistics using live disaster data tools."
             ),
             tools=self.tools,
-            llm=_get_crewai_llm(),
+            llm=get_crewai_llm(),
             verbose=True,
             max_retry_limit=3,
-            max_iter=3,
+            max_iter=5,
         )
 
         # DSPy for structured response generation
@@ -288,19 +265,22 @@ class DisasterAgent:
 
         task = Task(
             description=(
-                f"Analyze and answer this disaster-related query: {query}\n"
-                f"Additional context: {context_str}\n"
-                "Use the available tools to gather relevant disaster data. "
-                "Include event types, locations, severity, and impact assessments."
+                f"Disaster query: {query}\n"
+                f"Context: {context_str}\n"
+                "Step 1: Call get_active_events or get_recent_disasters to fetch real data.\n"
+                "Step 2: If alerts are asked, call get_active_official_alerts or get_gdacs_events.\n"
+                "Step 3: Report event types, locations, severity levels, and response priorities."
             ),
             expected_output=(
-                "Comprehensive disaster assessment with event details, "
-                "impact analysis, evacuation considerations, and recommendations."
+                "Disaster assessment with event details, severity, affected areas, "
+                "and emergency response recommendations."
             ),
             agent=self.crew_agent,
         )
 
-        crew = Crew(agents=[self.crew_agent], tasks=[task], verbose=True, respect_context_window=True, function_calling_llm=_get_tool_calling_llm())
+        # Refresh the local LLM before each call so tool instructions stay current.
+        self.crew_agent.llm = get_crewai_llm()
+        crew = Crew(agents=[self.crew_agent], tasks=[task], verbose=True, respect_context_window=True, function_calling_llm=get_crewai_tool_llm())
 
         try:
             crew_result = crew.kickoff()

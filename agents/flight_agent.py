@@ -3,7 +3,7 @@ Flight Agent - CrewAI + DSPy Implementation
 Handles ADS-B flight tracking queries using CrewAI tools and DSPy structured output
 """
 from typing import Dict, List, Optional, Any
-from utils.llm_client import get_llm_client
+from utils.llm_client import get_llm_client, get_crewai_llm, get_crewai_tool_llm
 from utils.database import DatabaseManager
 from utils.vector_db import VectorDBManager
 from tools.sql_tool import SQLTool
@@ -13,29 +13,6 @@ import json
 import dspy
 from crewai import Agent, Task, Crew, LLM
 from crewai.tools import BaseTool
-
-
-def _get_crewai_llm():
-    """Create a CrewAI-compatible LLM using Groq."""
-    return LLM(
-        model=f"groq/{Config.GROQ_MODEL}",
-        api_key=Config.GROQ_API_KEY,
-        temperature=Config.TEMPERATURE,
-        max_tokens=512,
-        num_retries=3,
-        timeout=120,
-    )
-
-
-def _get_tool_calling_llm():
-    return LLM(
-        model=f"groq/{Config.GROQ_TOOL_MODEL}",
-        api_key=Config.GROQ_API_KEY,
-        temperature=0.1,
-        max_tokens=512,
-        num_retries=3,
-        timeout=120,
-    )
 
 
 def create_flight_tools(sql_tool: SQLTool, vector_db: VectorDBManager) -> List[BaseTool]:
@@ -167,21 +144,20 @@ class FlightAgent:
         self.crew_agent = Agent(
             role="Flight & Aviation Surveillance Agent",
             goal=(
-                "Track and analyze flight data for disaster management. "
-                "You MUST use the available tools to gather real data before answering. "
-                "Never answer from your own knowledge alone."
+                "Track and analyze ADS-B flight data for disaster management. "
+                "ALWAYS use at least one tool to fetch real data before answering. "
+                "Never answer from your own knowledge alone — call a tool first."
             ),
             backstory=(
                 "You are an expert in ADS-B flight data analysis and aviation safety. "
-                "You ALWAYS call at least one tool to fetch real data before providing an answer. "
-                "You assist disaster management by tracking flights in affected areas and "
-                "identifying emergency situations."
+                "You assist disaster management by tracking flights in affected areas "
+                "and identifying emergency situations using live database tools."
             ),
             tools=self.tools,
-            llm=_get_crewai_llm(),
+            llm=get_crewai_llm(),
             verbose=True,
             max_retry_limit=3,
-            max_iter=3,
+            max_iter=5,
         )
 
         # DSPy for structured response generation
@@ -197,19 +173,22 @@ class FlightAgent:
 
         task = Task(
             description=(
-                f"Analyze and answer this flight-related query: {query}\n"
-                f"Additional context: {context_str}\n"
-                "Use the available tools to gather relevant flight data. "
-                "Include callsigns, positions, altitudes, and any emergency situations."
+                f"Flight query: {query}\n"
+                f"Context: {context_str}\n"
+                "Step 1: Call get_all_flights or another flight tool to fetch real data.\n"
+                "Step 2: Analyze the results for the query.\n"
+                "Step 3: Report callsigns, positions, altitudes, and any emergency situations."
             ),
             expected_output=(
-                "Detailed flight analysis with relevant data points including "
-                "coordinates, altitude, emergency status, and key findings."
+                "Concise flight analysis with real data points including "
+                "callsigns, altitude, emergency status, and key findings."
             ),
             agent=self.crew_agent,
         )
 
-        crew = Crew(agents=[self.crew_agent], tasks=[task], verbose=True, respect_context_window=True, function_calling_llm=_get_tool_calling_llm())
+        # Refresh the local LLM before each call so tool instructions stay current.
+        self.crew_agent.llm = get_crewai_llm()
+        crew = Crew(agents=[self.crew_agent], tasks=[task], verbose=True, respect_context_window=True, function_calling_llm=get_crewai_tool_llm())
 
         try:
             crew_result = crew.kickoff()
