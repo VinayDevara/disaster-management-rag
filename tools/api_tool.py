@@ -113,7 +113,7 @@ class WeatherAPITool:
         except Exception as e:
             return {"error": f"Weather API error: {str(e)}"}
     
-    def get_forecast(self, lat: float, lon: float, days: int = 5) -> List[Dict]:
+    def get_forecast(self, lat: float, lon: float, days: int) -> List[Dict]:
         """
         Get weather forecast
         
@@ -128,6 +128,7 @@ class WeatherAPITool:
         if not self.api_key:
             return [{"error": "OpenWeatherMap API key not configured"}]
         
+        days = max(1, min(int(days), 5))
         try:
             url = f"{self.base_url}/forecast"
             params = {
@@ -172,7 +173,7 @@ class DisasterAPITool:
     def __init__(self):
         self.base_url = Config.EONET_API_URL
     
-    def get_active_events(self, limit: int = 100) -> List[Dict]:
+    def get_active_events(self, limit: int) -> List[Dict]:
         """
         Get currently active natural disaster events
         
@@ -182,6 +183,7 @@ class DisasterAPITool:
         Returns:
             List of disaster events
         """
+        limit = max(1, min(int(limit), 500))
         try:
             params = {
                 "status": "open",
@@ -217,7 +219,7 @@ class DisasterAPITool:
             print(f"❌ EONET API error: {e}")
             return []
     
-    def get_events_by_category(self, category: str, limit: int = 50) -> List[Dict]:
+    def get_events_by_category(self, category: str, limit: int) -> List[Dict]:
         """
         Get events by category
         
@@ -231,11 +233,11 @@ class DisasterAPITool:
         Returns:
             List of disaster events
         """
+        limit = max(1, min(int(limit), 500))
         try:
-            url = f"{self.base_url}/categories/{category}"
-            params = {"limit": limit}
+            params = {"category": category, "limit": limit, "status": "open"}
             
-            response = requests.get(url, params=params, timeout=10)
+            response = requests.get(self.base_url, params=params, timeout=10)
             response.raise_for_status()
             
             data = response.json()
@@ -268,13 +270,14 @@ class DisasterAPITool:
         lat_max: float,
         lon_min: float,
         lon_max: float,
-        limit: int = 50
+        limit: int
     ) -> List[Dict]:
         """
         Get events in geographic bounding box
         Note: EONET API doesn't support bbox filtering directly,
         so we filter client-side
         """
+        limit = max(1, min(int(limit), 500))
         all_events = self.get_active_events(limit=200)
         
         filtered_events = []

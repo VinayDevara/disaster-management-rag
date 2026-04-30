@@ -1,336 +1,433 @@
 """
-Disaster Agent - Handles disaster event queries
-Uses Disaster API, Vector DB, and LLM reasoning
+Disaster Agent - CrewAI + DSPy Implementation
+Handles disaster event queries using CrewAI tools and DSPy structured output
 """
 from typing import Dict, List, Optional, Any
-from utils.llm_client import get_llm_client
+from utils.llm_client import get_llm_client, get_crewai_llm, get_crewai_tool_llm
 from utils.database import DatabaseManager
 from utils.vector_db import VectorDBManager
-from tools.sql_tool import DisasterSQLTool
+from tools.sql_tool import DisasterSQLTool, AlertsSQLTool, ExternalEventsSQLTool, CycloneSQLTool
 from tools.api_tool import DisasterAPITool
+from agents.dspy_signatures import GenerateDisasterResponse
+from config.config import Config
 import json
+import dspy
+from crewai import Agent, Task, Crew, LLM
+from crewai.tools import BaseTool
+
+
+def create_disaster_tools(
+    sql_tool: DisasterSQLTool, api_tool: DisasterAPITool, vector_db: VectorDBManager,
+    alerts_sql: AlertsSQLTool = None,
+    events_sql: ExternalEventsSQLTool = None,
+    cyclone_sql: CycloneSQLTool = None,
+) -> List[BaseTool]:
+    """Factory: create CrewAI tools wrapping disaster SQL/API/vector operations."""
+
+    def _truncate(text, max_len=2000):
+        return text[:max_len] + "...(truncated)" if len(text) > max_len else text
+
+    class _GetActiveEvents(BaseTool):
+        name: str = "get_active_events"
+        description: str = "Get currently active disaster events worldwide."
+
+        def _run(self, limit: str = "50") -> str:
+            try:
+                results = api_tool.get_active_events(int(limit))
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetEventsByCategory(BaseTool):
+        name: str = "get_events_by_category"
+        description: str = "Get disaster events filtered by category such as wildfires, volcanoes, or severeStorms."
+
+        def _run(self, category: str = "", limit: str = "20") -> str:
+            try:
+                results = api_tool.get_events_by_category(str(category), int(limit))
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetEventsInArea(BaseTool):
+        name: str = "get_events_in_area"
+        description: str = "Get disaster events within a geographic bounding box."
+
+        def _run(self, lat_min: str = "0", lat_max: str = "0",
+                 lon_min: str = "0", lon_max: str = "0", limit: str = "20") -> str:
+            try:
+                results = api_tool.get_events_in_area(
+                    float(lat_min), float(lat_max),
+                    float(lon_min), float(lon_max), int(limit)
+                )
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetEventDetails(BaseTool):
+        name: str = "get_event_details"
+        description: str = "Get detailed information about a specific disaster event by its ID."
+
+        def _run(self, event_id: str = "") -> str:
+            try:
+                result = api_tool.get_event_details(str(event_id))
+                return _truncate(json.dumps(result, default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetDisasterEventsByType(BaseTool):
+        name: str = "get_disaster_events_by_type"
+        description: str = "Get historical disaster events by type from the database."
+
+        def _run(self, event_type: str = "", limit: str = "20") -> str:
+            try:
+                results = sql_tool.get_disaster_events_by_type(str(event_type), int(limit))
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetRecentDisasters(BaseTool):
+        name: str = "get_recent_disasters"
+        description: str = "Get recent disaster events from the database."
+
+        def _run(self, days: str = "7", limit: str = "20") -> str:
+            try:
+                results = sql_tool.get_recent_disasters(int(days), int(limit))
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _VectorSearchDisasters(BaseTool):
+        name: str = "vector_search_disasters"
+        description: str = "Semantic search across the disaster knowledge base."
+
+        def _run(self, query: str) -> str:
+            try:
+                results = vector_db.search("disasters", str(query), n_results=5)
+                return _truncate(json.dumps({
+                    "documents": results["documents"],
+                    "metadatas": results["metadatas"]
+                }, default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    # ── New tools for ingested external data ──────────────────────────
+
+    class _GetOfficialAlerts(BaseTool):
+        name: str = "get_official_alerts"
+        description: str = "Get latest SACHET/NDMA official disaster warnings for Dakshina Karnataka."
+
+        def _run(self, district: str = None, limit: str = "50") -> str:
+            if alerts_sql is None:
+                return json.dumps({"error": "AlertsSQLTool not available"})
+            try:
+                results = alerts_sql.get_latest_alerts(limit=int(limit), district=district or None)
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetActiveAlerts(BaseTool):
+        name: str = "get_active_official_alerts"
+        description: str = "Get currently active non-expired official disaster alerts."
+
+        def _run(self, limit: str = "50") -> str:
+            if alerts_sql is None:
+                return json.dumps({"error": "AlertsSQLTool not available"})
+            try:
+                results = alerts_sql.get_active_alerts(limit=int(limit))
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetGDACSEvents(BaseTool):
+        name: str = "get_gdacs_events"
+        description: str = "Get latest GDACS flood and cyclone events."
+
+        def _run(self, event_type: str = None, limit: str = "50") -> str:
+            if events_sql is None:
+                return json.dumps({"error": "ExternalEventsSQLTool not available"})
+            try:
+                results = events_sql.get_latest_events(limit=int(limit), event_type=event_type or None)
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetGDACSEventsBySeverity(BaseTool):
+        name: str = "get_gdacs_events_by_severity"
+        description: str = "Get GDACS events filtered by severity level such as red, orange, or green."
+
+        def _run(self, severity: str = "", limit: str = "50") -> str:
+            if events_sql is None:
+                return json.dumps({"error": "ExternalEventsSQLTool not available"})
+            try:
+                results = events_sql.get_events_by_severity(str(severity), int(limit))
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetHistoricalCyclones(BaseTool):
+        name: str = "get_historical_cyclones"
+        description: str = "Get IBTrACS historical cyclone data for the North Indian Ocean basin."
+
+        def _run(self, basin: str = "NI", limit: str = "50") -> str:
+            if cyclone_sql is None:
+                return json.dumps({"error": "CycloneSQLTool not available"})
+            try:
+                results = cyclone_sql.get_cyclones_in_basin(str(basin), int(limit))
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetIntenseCyclones(BaseTool):
+        name: str = "get_intense_cyclones"
+        description: str = "Get historical cyclones above a wind speed threshold in knots."
+
+        def _run(self, min_wind_kt: str = "64", limit: str = "50") -> str:
+            if cyclone_sql is None:
+                return json.dumps({"error": "CycloneSQLTool not available"})
+            try:
+                results = cyclone_sql.get_intense_cyclones(float(min_wind_kt), int(limit))
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    tools = [
+        _GetActiveEvents(), _GetEventsByCategory(), _GetEventsInArea(),
+        _GetEventDetails(), _GetDisasterEventsByType(), _GetRecentDisasters(),
+        _VectorSearchDisasters(),
+    ]
+
+    if alerts_sql is not None:
+        tools.extend([_GetOfficialAlerts(), _GetActiveAlerts()])
+    if events_sql is not None:
+        tools.extend([_GetGDACSEvents(), _GetGDACSEventsBySeverity()])
+    if cyclone_sql is not None:
+        tools.extend([_GetHistoricalCyclones(), _GetIntenseCyclones()])
+
+    return tools
+
 
 class DisasterAgent:
     """
-    Specialized agent for disaster event monitoring and analysis
-    
-    Capabilities:
-    - Track active natural disasters
-    - Query historical disaster events
-    - Analyze disaster impact areas
-    - Correlate disasters with flights and weather
-    - Provide disaster severity assessments
+    CrewAI-based Evacuation & Logistics Agent.
+
+    Uses CrewAI for tool selection/execution and DSPy for structured response generation.
     """
-    
+
     def __init__(self, db_manager: DatabaseManager, vector_db: VectorDBManager):
-        self.llm = get_llm_client()
         self.db = db_manager
         self.vector_db = vector_db
         self.sql_tool = DisasterSQLTool(db_manager)
         self.api_tool = DisasterAPITool()
-        
-        self.system_prompt = """You are a Disaster Management Specialist Agent.
+        self.llm = get_llm_client()
 
-Your capabilities:
-1. Monitor active natural disaster events globally
-2. Analyze disaster impact zones and severity
-3. Track wildfires, earthquakes, floods, storms, volcanoes
-4. Correlate disasters with aviation operations
-5. Provide emergency response assessments
+        # New SQL tools for ingested data
+        self.alerts_sql = AlertsSQLTool(db_manager)
+        self.events_sql = ExternalEventsSQLTool(db_manager)
+        self.cyclone_sql = CycloneSQLTool(db_manager)
 
-Available tools:
-- get_active_events(): Get currently active disasters (NASA EONET)
-- get_events_by_category(category): Get disasters by type
-- get_events_in_area(lat_min, lat_max, lon_min, lon_max): Query geographic area
-- get_event_details(event_id): Get detailed event information
-- get_disaster_events_by_type(type): Query historical data
-- get_recent_disasters(days): Get recent disaster events
-- vector_search(query): Semantic search disaster data
+        # CrewAI tools and agent
+        self.tools = create_disaster_tools(
+            self.sql_tool, self.api_tool, self.vector_db,
+            alerts_sql=self.alerts_sql,
+            events_sql=self.events_sql,
+            cyclone_sql=self.cyclone_sql,
+        )
+        self.crew_agent = Agent(
+            role="Evacuation & Logistics Agent",
+            goal=(
+                "Monitor and analyze disaster events for emergency management. "
+                "ALWAYS use at least one tool to fetch real data before answering. "
+                "Never answer from your own knowledge alone — call a tool first."
+            ),
+            backstory=(
+                "You are an expert in disaster management and emergency logistics. "
+                "You rapidly generate evacuation plans, assess disaster impact zones, "
+                "and plan emergency logistics using live disaster data tools."
+            ),
+            tools=self.tools,
+            llm=get_crewai_llm(),
+            verbose=True,
+            max_retry_limit=3,
+            max_iter=5,
+        )
 
-Disaster categories:
-- Wildfires
-- Earthquakes  
-- Floods
-- Storms (hurricanes, cyclones, typhoons)
-- Volcanoes
-- Landslides
-- Drought
-- Severe Weather
+        # DSPy for structured response generation
+        self.response_predictor = dspy.ChainOfThought(GenerateDisasterResponse)
 
-Severity assessment factors:
-- Geographic extent
-- Population affected
-- Infrastructure impact
-- Aviation disruption potential
-- Emergency response requirements
-
-Guidelines:
-- Provide accurate geographic coordinates
-- Include event timelines
-- Assess operational impact
-- Flag events affecting flight paths
-- Consider cascading effects
-
-When responding:
-1. Identify relevant disaster events
-2. Assess severity and impact area
-3. Provide geographic context
-4. Analyze aviation/operational implications
-5. Include source references and timestamps
-"""
-    
     def process(self, query: str, context: Optional[Dict] = None) -> Dict[str, Any]:
         """
-        Process disaster-related query
-        
-        Args:
-            query: User query about disasters
-            context: Optional context from orchestrator
-            
-        Returns:
-            Response dictionary with data and answer
+        Process disaster-related query using CrewAI agent + DSPy response synthesis.
         """
         print(f"🔥 Disaster Agent processing: {query}")
-        
-        # Extract entities
-        entities = self.llm.extract_entities(query)
-        disaster_types = entities.get("disaster_types", [])
-        locations = entities.get("locations", [])
-        
-        # Determine tools to use
-        tool_selection_prompt = f"""Analyze this disaster query and determine which tools to use.
 
-Query: {query}
+        context_str = json.dumps(context, default=str) if context else "No additional context."
 
-Context: {json.dumps(context) if context else 'None'}
-
-Extracted disaster types: {disaster_types}
-Extracted locations: {locations}
-
-Available tools:
-1. get_active_events - Current active disasters worldwide
-2. get_events_by_category - Disasters by type (wildfires, earthquakes, etc.)
-3. get_events_in_area - Disasters in geographic bounding box
-4. get_event_details - Detailed info about specific event
-5. get_disaster_events_by_type - Historical disasters by type
-6. get_recent_disasters - Recent disasters (last N days)
-7. vector_search - Semantic search
-
-Return JSON:
-{{
-  "selected_tools": ["tool_name"],
-  "parameters": {{"tool_name": {{"param": "value"}}}},
-  "reasoning": "Explanation",
-  "needs_realtime": true/false
-}}
-
-If query asks about "current" or "active" disasters, use API tools (get_active_events).
-For historical analysis, use database tools.
-"""
-        
-        tool_decision = self.llm.generate(
-            prompt=tool_selection_prompt,
-            system_prompt=self.system_prompt,
-            json_mode=True,
-            temperature=0.3
+        task = Task(
+            description=(
+                f"Disaster query: {query}\n"
+                f"Context: {context_str}\n"
+                "Step 1: Call get_active_events or get_recent_disasters to fetch real data.\n"
+                "Step 2: If alerts are asked, call get_active_official_alerts or get_gdacs_events.\n"
+                "Step 3: Report event types, locations, severity levels, and response priorities."
+            ),
+            expected_output=(
+                "Disaster assessment with event details, severity, affected areas, "
+                "and emergency response recommendations."
+            ),
+            agent=self.crew_agent,
         )
-        
+
+        # Refresh the local LLM before each call so tool instructions stay current.
+        self.crew_agent.llm = get_crewai_llm()
+        crew = Crew(agents=[self.crew_agent], tasks=[task], verbose=True, respect_context_window=True, function_calling_llm=get_crewai_tool_llm())
+
         try:
-            decision = json.loads(tool_decision)
-        except:
-            decision = {
-                "selected_tools": ["get_active_events"],
-                "parameters": {},
-                "reasoning": "Default to active events"
-            }
-        
-        # Execute tools
-        tool_results = {}
-        
-        for tool_name in decision.get("selected_tools", []):
-            params = decision.get("parameters", {}).get(tool_name, {})
-            
-            try:
-                if tool_name == "get_active_events":
-                    limit = params.get("limit", 100)
-                    tool_results[tool_name] = self.api_tool.get_active_events(limit)
-                
-                elif tool_name == "get_events_by_category":
-                    category = params.get("category", "wildfires")
-                    tool_results[tool_name] = self.api_tool.get_events_by_category(category)
-                
-                elif tool_name == "get_events_in_area":
-                    tool_results[tool_name] = self.api_tool.get_events_in_area(
-                        params.get("lat_min", 0),
-                        params.get("lat_max", 0),
-                        params.get("lon_min", 0),
-                        params.get("lon_max", 0)
-                    )
-                
-                elif tool_name == "get_event_details":
-                    event_id = params.get("event_id", "")
-                    tool_results[tool_name] = self.api_tool.get_event_details(event_id)
-                
-                elif tool_name == "get_disaster_events_by_type":
-                    event_type = params.get("type", "")
-                    tool_results[tool_name] = self.sql_tool.get_disaster_events_by_type(event_type)
-                
-                elif tool_name == "get_recent_disasters":
-                    days = params.get("days", 30)
-                    tool_results[tool_name] = self.sql_tool.get_recent_disasters(days)
-                
-                elif tool_name == "vector_search":
-                    search_query = params.get("query", query)
-                    search_results = self.vector_db.search("disasters", search_query, n_results=10)
-                    tool_results[tool_name] = {
-                        "documents": search_results["documents"],
-                        "metadatas": search_results["metadatas"]
-                    }
-            
-            except Exception as e:
-                tool_results[tool_name] = {"error": str(e)}
-        
-        # Analyze disaster severity and impact
-        impact_analysis = self._analyze_impact(tool_results)
-        
-        # Generate response
-        response_prompt = f"""Based on the query and disaster data, provide a comprehensive assessment.
+            crew_result = crew.kickoff()
+            raw_output = str(crew_result)
+        except Exception as e:
+            print(f"⚠️ CrewAI disaster execution failed: {e}")
+            print("🔄 Falling back to direct tool queries...")
+            raw_output = self._fallback_direct_query(query)
 
-Query: {query}
+        # Analyze impact from raw output
+        impact_analysis = self._analyze_impact_from_output(raw_output)
 
-Disaster Data:
-{json.dumps(tool_results, indent=2, default=str)}
+        # Use DSPy for structured response generation
+        try:
+            dspy_result = self.response_predictor(
+                query=query,
+                disaster_data=raw_output,
+                impact_analysis=json.dumps(impact_analysis),
+            )
+            answer = dspy_result.response
+        except Exception as e:
+            print(f"⚠️ DSPy disaster response generation failed: {e}")
+            answer = raw_output
 
-Impact Analysis:
-{json.dumps(impact_analysis, indent=2)}
-
-Provide:
-1. Summary of relevant disaster events
-2. Geographic locations and coordinates
-3. Event timelines and current status
-4. Severity and impact assessment
-5. Aviation/operational implications
-6. Affected areas and populations
-7. Emergency response considerations
-
-Include specific event IDs, coordinates, and source references.
-Prioritize events by severity and relevance to query.
-"""
-        
-        final_answer = self.llm.generate(
-            prompt=response_prompt,
-            system_prompt=self.system_prompt,
-            temperature=0.7
-        )
-        
         return {
             "agent": "disaster",
             "query": query,
-            "tool_selection": decision,
-            "tool_results": tool_results,
+            "answer": answer,
+            "raw_output": raw_output,
             "impact_analysis": impact_analysis,
-            "answer": final_answer,
-            "event_count": sum(len(v) if isinstance(v, list) else 1 for v in tool_results.values())
+            "event_count": 1,
+            "data_count": 1,
+            "status": "success" if "Error" not in raw_output else "partial",
         }
-    
-    def _analyze_impact(self, tool_results: Dict) -> Dict[str, Any]:
-        """
-        Analyze disaster impact from retrieved data
-        
-        Returns:
-            Impact assessment dictionary
-        """
+
+    def _analyze_impact_from_output(self, raw_output: str) -> Dict[str, Any]:
+        """Basic impact analysis from raw tool output."""
         impact = {
             "severity": "low",
-            "affected_areas": [],
-            "event_types": [],
             "aviation_risk": "minimal",
             "response_priority": "routine",
-            "total_events": 0
         }
-        
-        all_events = []
-        
-        # Collect all events from results
-        for tool_name, data in tool_results.items():
-            if isinstance(data, list):
-                all_events.extend(data)
-                impact["total_events"] += len(data)
-        
-        # Analyze events
-        high_severity_count = 0
-        event_type_counts = {}
-        
-        for event in all_events:
-            if isinstance(event, dict):
-                # Track event types
-                event_type = event.get("event_type", "unknown")
-                event_type_counts[event_type] = event_type_counts.get(event_type, 0) + 1
-                
-                # Extract locations
-                location = event.get("location_name") or f"{event.get('lat', 'N/A')}, {event.get('lon', 'N/A')}"
-                if location not in impact["affected_areas"]:
-                    impact["affected_areas"].append(location)
-                
-                # Check severity indicators
-                title = event.get("title", "").lower()
-                if any(word in title for word in ["major", "severe", "catastrophic", "extreme"]):
-                    high_severity_count += 1
-        
-        # Determine overall severity
-        if high_severity_count > 5:
+
+        output_lower = raw_output.lower()
+        if any(w in output_lower for w in ["major", "catastrophic", "extreme", "critical"]):
             impact["severity"] = "critical"
             impact["aviation_risk"] = "high"
             impact["response_priority"] = "immediate"
-        elif high_severity_count > 2:
+        elif any(w in output_lower for w in ["severe", "significant", "large"]):
             impact["severity"] = "high"
             impact["aviation_risk"] = "moderate"
             impact["response_priority"] = "urgent"
-        elif impact["total_events"] > 10:
+        elif any(w in output_lower for w in ["moderate", "active", "ongoing"]):
             impact["severity"] = "moderate"
             impact["aviation_risk"] = "low-moderate"
             impact["response_priority"] = "elevated"
-        
-        impact["event_types"] = list(event_type_counts.keys())
-        impact["event_breakdown"] = event_type_counts
-        
+
         return impact
-    
-    def get_disasters_near_location(self, lat: float, lon: float, radius_deg: float = 5.0) -> List[Dict]:
-        """
-        Get disasters near specific location
-        
-        Args:
-            lat: Latitude
-            lon: Longitude
-            radius_deg: Search radius in degrees
-            
-        Returns:
-            List of nearby disasters
-        """
+
+    def _fallback_direct_query(self, query: str) -> str:
+        """Bypass CrewAI and call tools directly when LLM tool calling fails."""
+        results = []
+        q = query.lower()
+
+        try:
+            vr = self.vector_db.search("disasters", query, n_results=10)
+            docs = vr.get("documents", [])
+            if docs and docs[0]:
+                flat = docs[0] if isinstance(docs[0], list) else docs
+                results.append("Disaster knowledge base:\n" + "\n".join(str(d) for d in flat[:5]))
+        except Exception:
+            pass
+
+        try:
+            recent = self.sql_tool.get_recent_disasters(days=30, limit=10)
+            if recent:
+                results.append("Recent disasters:\n" + json.dumps(recent[:10], default=str))
+        except Exception:
+            pass
+
+        try:
+            events = self.api_tool.get_active_events(limit=20)
+            if events:
+                results.append("Active events:\n" + json.dumps(events[:10], default=str))
+        except Exception:
+            pass
+
+        for kw, cat in [("wildfire", "wildfires"), ("fire", "wildfires"),
+                         ("volcano", "volcanoes"), ("storm", "severeStorms"),
+                         ("earthquake", "earthquakes"), ("flood", "floods"),
+                         ("landslide", "landslides"), ("cyclone", "severeStorms")]:
+            if kw in q:
+                try:
+                    ev = self.api_tool.get_events_by_category(cat, 10)
+                    if ev:
+                        results.append(f"{cat} events:\n" + json.dumps(ev[:5], default=str))
+                except Exception:
+                    pass
+                break
+
+        try:
+            alerts = self.alerts_sql.get_latest_alerts(limit=10)
+            if alerts:
+                results.append("Official alerts:\n" + json.dumps(alerts[:5], default=str))
+        except Exception:
+            pass
+
+        try:
+            gdacs = self.events_sql.get_latest_events(limit=10)
+            if gdacs:
+                results.append("GDACS events:\n" + json.dumps(gdacs[:5], default=str))
+        except Exception:
+            pass
+
+        if any(w in q for w in ["cyclone", "hurricane", "typhoon"]):
+            try:
+                cyc = self.cyclone_sql.get_cyclones_in_basin("NI", 10)
+                if cyc:
+                    results.append("Historical cyclones:\n" + json.dumps(cyc[:5], default=str))
+            except Exception:
+                pass
+
+        return "\n\n".join(results) if results else "No disaster data available for this query."
+
+    # ── Helper methods ──────────────────────────────────────────────────────
+
+    def get_disasters_near_location(
+        self, lat: float, lon: float, radius_deg: float = 5.0
+    ) -> List[Dict]:
         return self.api_tool.get_events_in_area(
-            lat - radius_deg,
-            lat + radius_deg,
-            lon - radius_deg,
-            lon + radius_deg
+            lat - radius_deg, lat + radius_deg,
+            lon - radius_deg, lon + radius_deg,
         )
-    
+
     def get_active_disasters_summary(self) -> Dict:
-        """Get summary of all active disasters"""
         events = self.api_tool.get_active_events(limit=200)
-        
         return {
             "total_events": len(events),
             "events": events,
-            "impact_analysis": self._analyze_impact({"active": events})
+            "impact_analysis": self._analyze_impact_from_output(json.dumps(events, default=str)),
         }
 
 
 if __name__ == "__main__":
-    # Test disaster agent
     db = DatabaseManager()
     vector_db = VectorDBManager()
     agent = DisasterAgent(db, vector_db)
-    
+
     result = agent.process("What active wildfires are happening right now?")
     print(json.dumps(result, indent=2, default=str))

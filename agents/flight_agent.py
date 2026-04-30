@@ -1,240 +1,354 @@
 """
-Flight Agent - Handles ADS-B flight tracking queries
-Uses SQL, Vector DB, and LLM reasoning
+Flight Agent - CrewAI + DSPy Implementation
+Handles ADS-B flight tracking queries using CrewAI tools and DSPy structured output
 """
 from typing import Dict, List, Optional, Any
-from utils.llm_client import get_llm_client
+from utils.llm_client import get_llm_client, get_crewai_llm, get_crewai_tool_llm
 from utils.database import DatabaseManager
 from utils.vector_db import VectorDBManager
 from tools.sql_tool import SQLTool
+from agents.dspy_signatures import GenerateFlightResponse
+from config.config import Config
 import json
+import dspy
+from crewai import Agent, Task, Crew, LLM
+from crewai.tools import BaseTool
+
+
+def create_flight_tools(sql_tool: SQLTool, vector_db: VectorDBManager) -> List[BaseTool]:
+    """Factory: create CrewAI tools wrapping flight SQL/vector operations."""
+
+    def _truncate(text, max_len=2000):
+        return text[:max_len] + "...(truncated)" if len(text) > max_len else text
+
+    class _GetAllFlights(BaseTool):
+        name: str = "get_all_flights"
+        description: str = "Get all recent flights from ADS-B database."
+
+        def _run(self, limit: str = "50") -> str:
+            try:
+                results = sql_tool.get_all_flights(int(limit))
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetFlightByCallsign(BaseTool):
+        name: str = "get_flight_by_callsign"
+        description: str = "Search for a specific flight by callsign or flight number."
+
+        def _run(self, callsign: str) -> str:
+            try:
+                results = sql_tool.get_flight_by_callsign(str(callsign).strip())
+                return _truncate(json.dumps(results, default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetFlightByHex(BaseTool):
+        name: str = "get_flight_by_hex"
+        description: str = "Search for a flight by hex aircraft identifier."
+
+        def _run(self, hex_code: str) -> str:
+            try:
+                results = sql_tool.get_flight_by_hex(str(hex_code).strip())
+                return _truncate(json.dumps(results, default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetFlightsInArea(BaseTool):
+        name: str = "get_flights_in_area"
+        description: str = "Search flights within a geographic bounding box."
+
+        def _run(self, lat_min: str = "0", lat_max: str = "0",
+                 lon_min: str = "0", lon_max: str = "0", limit: str = "50") -> str:
+            try:
+                results = sql_tool.get_flights_in_area(
+                    float(lat_min), float(lat_max),
+                    float(lon_min), float(lon_max), int(limit)
+                )
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetEmergencyFlights(BaseTool):
+        name: str = "get_emergency_flights"
+        description: str = "Find flights with emergency squawk codes 7500, 7600, or 7700."
+
+        def _run(self, limit: str = "50") -> str:
+            try:
+                results = sql_tool.get_emergency_flights(int(limit))
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetFlightTrajectory(BaseTool):
+        name: str = "get_flight_trajectory"
+        description: str = "Get flight path history for an aircraft."
+
+        def _run(self, hex_code: str) -> str:
+            try:
+                results = sql_tool.get_flight_trajectory(str(hex_code).strip())
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetFlightsNearLocation(BaseTool):
+        name: str = "get_flights_near_location"
+        description: str = "Find flights near specific coordinates."
+
+        def _run(self, lat: str = "0", lon: str = "0",
+                 radius_deg: str = "2.0", limit: str = "50") -> str:
+            try:
+                results = sql_tool.get_flights_near_location(
+                    float(lat), float(lon), float(radius_deg), int(limit)
+                )
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _VectorSearchFlights(BaseTool):
+        name: str = "vector_search_flights"
+        description: str = "Semantic search across the flight knowledge base."
+
+        def _run(self, query: str) -> str:
+            try:
+                results = vector_db.search("flights", str(query), n_results=5)
+                return _truncate(json.dumps({
+                    "documents": results["documents"],
+                    "metadatas": results["metadatas"]
+                }, default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    return [
+        _GetAllFlights(), _GetFlightByCallsign(), _GetFlightByHex(),
+        _GetFlightsInArea(), _GetEmergencyFlights(), _GetFlightTrajectory(),
+        _GetFlightsNearLocation(), _VectorSearchFlights(),
+    ]
+
 
 class FlightAgent:
     """
-    Specialized agent for flight tracking and ADS-B data analysis
-    
-    Capabilities:
-    - Query flight information by callsign, hex, location
-    - Track flight trajectories
-    - Identify emergency situations
-    - Analyze flight patterns
+    CrewAI-based Flight & Aviation Surveillance Agent.
+
+    Uses CrewAI for tool selection/execution and DSPy for structured response generation.
+    Also serves as the backup orchestrator if the primary orchestrator fails.
     """
-    
+
     def __init__(self, db_manager: DatabaseManager, vector_db: VectorDBManager):
-        self.llm = get_llm_client()
         self.db = db_manager
         self.vector_db = vector_db
         self.sql_tool = SQLTool(db_manager)
-        
-        self.system_prompt = """You are a Flight Tracking Specialist Agent for disaster management.
 
-Your capabilities:
-1. Query ADS-B flight data using SQL
-2. Search flight information using semantic search
-3. Analyze flight patterns and trajectories
-4. Identify emergency situations and diversions
-5. Correlate flight data with geographic locations
+        # CrewAI tools and agent
+        self.tools = create_flight_tools(self.sql_tool, self.vector_db)
+        self.crew_agent = Agent(
+            role="Flight & Aviation Surveillance Agent",
+            goal=(
+                "Track and analyze ADS-B flight data for disaster management. "
+                "ALWAYS use at least one tool to fetch real data before answering. "
+                "Never answer from your own knowledge alone — call a tool first."
+            ),
+            backstory=(
+                "You are an expert in ADS-B flight data analysis and aviation safety. "
+                "You assist disaster management by tracking flights in affected areas "
+                "and identifying emergency situations using live database tools."
+            ),
+            tools=self.tools,
+            llm=get_crewai_llm(),
+            verbose=True,
+            max_retry_limit=3,
+            max_iter=5,
+        )
 
-Available tools:
-- get_all_flights(limit): Get recent flights
-- get_flight_by_callsign(callsign): Search by flight number
-- get_flight_by_hex(hex_code): Search by aircraft hex code
-- get_flights_in_area(lat_min, lat_max, lon_min, lon_max): Get flights in area
-- get_emergency_flights(): Get flights with emergency status
-- get_flight_trajectory(hex_code): Get flight path
-- get_flights_near_location(lat, lon, radius_deg): Get flights near coordinates
-- vector_search(query): Semantic search across flight data
+        # DSPy for structured response generation
+        self.response_predictor = dspy.ChainOfThought(GenerateFlightResponse)
 
-Guidelines:
-- Always verify flight callsigns and hex codes
-- Consider altitude, speed, and location context
-- Flag emergency squawks (7500, 7600, 7700)
-- Provide coordinates when relevant
-- Use vector search for natural language queries
-- Be precise with technical aviation terminology
-
-When responding:
-1. First determine which tool(s) to use based on the query
-2. Execute the appropriate queries
-3. Analyze the results using your aviation expertise
-4. Provide clear, actionable information
-5. Include relevant coordinates and timestamps
-"""
-    
     def process(self, query: str, context: Optional[Dict] = None) -> Dict[str, Any]:
         """
-        Process flight-related query
-        
-        Args:
-            query: User query about flights
-            context: Optional context from orchestrator
-            
-        Returns:
-            Response dictionary with data and answer
+        Process flight-related query using CrewAI agent + DSPy response synthesis.
         """
         print(f"✈️  Flight Agent processing: {query}")
-        
-        # Use LLM to determine which tools to use
-        tool_selection_prompt = f"""Analyze this flight-related query and determine which tools to use.
 
-Query: {query}
+        context_str = json.dumps(context, default=str) if context else "No additional context."
 
-Context: {json.dumps(context) if context else 'None'}
-
-Available tools:
-1. get_all_flights - Get recent flights
-2. get_flight_by_callsign - Search specific flight number
-3. get_flight_by_hex - Search by aircraft identifier
-4. get_flights_in_area - Search by geographic bounding box
-5. get_emergency_flights - Find emergency situations
-6. get_flight_trajectory - Get flight path history
-7. get_flights_near_location - Find flights near coordinates
-8. vector_search - Semantic search for complex queries
-
-Return a JSON object with:
-{{
-  "selected_tools": ["tool_name1", "tool_name2"],
-  "parameters": {{"tool_name1": {{"param": "value"}}, ...}},
-  "reasoning": "Why these tools were selected"
-}}
-
-If the query mentions specific flight numbers, hex codes, or locations, extract them for parameters.
-"""
-        
-        tool_decision = self.llm.generate(
-            prompt=tool_selection_prompt,
-            system_prompt=self.system_prompt,
-            json_mode=True,
-            temperature=0.3
+        task = Task(
+            description=(
+                f"Flight query: {query}\n"
+                f"Context: {context_str}\n"
+                "Step 1: Call get_all_flights or another flight tool to fetch real data.\n"
+                "Step 2: Analyze the results for the query.\n"
+                "Step 3: Report callsigns, positions, altitudes, and any emergency situations."
+            ),
+            expected_output=(
+                "Concise flight analysis with real data points including "
+                "callsigns, altitude, emergency status, and key findings."
+            ),
+            agent=self.crew_agent,
         )
-        
+
+        # Refresh the local LLM before each call so tool instructions stay current.
+        self.crew_agent.llm = get_crewai_llm()
+        crew = Crew(agents=[self.crew_agent], tasks=[task], verbose=True, respect_context_window=True, function_calling_llm=get_crewai_tool_llm())
+
         try:
-            decision = json.loads(tool_decision)
-        except:
-            decision = {
-                "selected_tools": ["vector_search"],
-                "parameters": {"vector_search": {"query": query}},
-                "reasoning": "Default to semantic search"
-            }
-        
-        # Execute selected tools
-        tool_results = {}
-        
-        for tool_name in decision.get("selected_tools", []):
-            params = decision.get("parameters", {}).get(tool_name, {})
-            
-            try:
-                if tool_name == "get_all_flights":
-                    limit = params.get("limit", 100)
-                    tool_results[tool_name] = self.sql_tool.get_all_flights(limit)
-                
-                elif tool_name == "get_flight_by_callsign":
-                    callsign = params.get("callsign", "")
-                    tool_results[tool_name] = self.sql_tool.get_flight_by_callsign(callsign)
-                
-                elif tool_name == "get_flight_by_hex":
-                    hex_code = params.get("hex_code", "")
-                    tool_results[tool_name] = self.sql_tool.get_flight_by_hex(hex_code)
-                
-                elif tool_name == "get_flights_in_area":
-                    tool_results[tool_name] = self.sql_tool.get_flights_in_area(
-                        params.get("lat_min", 0),
-                        params.get("lat_max", 0),
-                        params.get("lon_min", 0),
-                        params.get("lon_max", 0),
-                        params.get("limit", 100)
-                    )
-                
-                elif tool_name == "get_emergency_flights":
-                    tool_results[tool_name] = self.sql_tool.get_emergency_flights()
-                
-                elif tool_name == "get_flight_trajectory":
-                    hex_code = params.get("hex_code", "")
-                    tool_results[tool_name] = self.sql_tool.get_flight_trajectory(hex_code)
-                
-                elif tool_name == "get_flights_near_location":
-                    tool_results[tool_name] = self.sql_tool.get_flights_near_location(
-                        params.get("lat", 0),
-                        params.get("lon", 0),
-                        params.get("radius_deg", 1.0)
-                    )
-                
-                elif tool_name == "vector_search":
-                    search_query = params.get("query", query)
-                    search_results = self.vector_db.search("flights", search_query, n_results=10)
-                    tool_results[tool_name] = {
-                        "documents": search_results["documents"],
-                        "metadatas": search_results["metadatas"]
-                    }
-            
-            except Exception as e:
-                tool_results[tool_name] = {"error": str(e)}
-        
-        # Generate final response using LLM
-        response_prompt = f"""Based on the query and retrieved data, provide a comprehensive answer.
+            crew_result = crew.kickoff()
+            raw_output = str(crew_result)
+        except Exception as e:
+            print(f"⚠️ CrewAI flight execution failed: {e}")
+            print("🔄 Falling back to direct tool queries...")
+            raw_output = self._fallback_direct_query(query)
 
-Query: {query}
+        # Use DSPy for structured response generation
+        try:
+            dspy_result = self.response_predictor(
+                query=query,
+                tool_results=raw_output,
+            )
+            answer = dspy_result.response
+        except Exception as e:
+            print(f"⚠️ DSPy flight response generation failed: {e}")
+            answer = raw_output
 
-Tool Results:
-{json.dumps(tool_results, indent=2, default=str)}
-
-Provide:
-1. Direct answer to the query
-2. Relevant flight details (callsign, position, altitude, status)
-3. Any emergency or safety concerns
-4. Geographic context if applicable
-5. Timestamps and tracking information
-
-Be specific and technical where appropriate. Include coordinates for mapping.
-"""
-        
-        final_answer = self.llm.generate(
-            prompt=response_prompt,
-            system_prompt=self.system_prompt,
-            temperature=0.7
-        )
-        
         return {
             "agent": "flight",
             "query": query,
-            "tool_selection": decision,
-            "tool_results": tool_results,
-            "answer": final_answer,
-            "data_count": sum(len(v) if isinstance(v, list) else 1 for v in tool_results.values())
+            "answer": answer,
+            "raw_output": raw_output,
+            "data_count": 1,
+            "status": "success" if "Error" not in raw_output else "partial",
         }
-    
-    def get_emergency_status(self) -> List[Dict]:
-        """Get current emergency flights - helper method"""
-        return self.sql_tool.get_emergency_flights(limit=50)
-    
-    def get_flights_in_disaster_area(
+
+    def _fallback_direct_query(self, query: str) -> str:
+        """Bypass CrewAI and call tools directly when LLM tool calling fails."""
+        results = []
+        q = query.lower()
+
+        try:
+            vr = self.vector_db.search("flights", query, n_results=5)
+            docs = vr.get("documents", [])
+            if docs and docs[0]:
+                flat = docs[0] if isinstance(docs[0], list) else docs
+                results.append("Flight knowledge base:\n" + "\n".join(str(d) for d in flat[:5]))
+        except Exception:
+            pass
+
+        try:
+            flights = self.sql_tool.get_all_flights(limit=20)
+            if flights:
+                results.append("Recent flights:\n" + json.dumps(flights[:10], default=str))
+        except Exception:
+            pass
+
+        try:
+            emergencies = self.sql_tool.get_emergency_flights(limit=10)
+            if emergencies:
+                results.append("Emergency flights:\n" + json.dumps(emergencies[:5], default=str))
+        except Exception:
+            pass
+
+        return "\n\n".join(results) if results else "No flight data available for this query."
+
+    # ── Backup orchestrator capability ──────────────────────────────────────
+
+    def process_as_orchestrator(
         self,
-        lat: float,
-        lon: float,
-        radius_deg: float = 2.0
+        query: str,
+        agents: Dict[str, Any],
+        consensus_agent: Any,
+        error_msg: str,
+    ) -> Dict[str, Any]:
+        """
+        Fallback orchestrator mode.
+        When the primary orchestrator fails, FlightAgent takes over and runs
+        all available agents with a simplified strategy.
+        """
+        from datetime import datetime
+
+        print("🔄 Flight Agent acting as BACKUP orchestrator")
+        print(f"   Primary orchestrator error: {error_msg}")
+        start_time = datetime.now()
+
+        agent_results = {}
+
+        # Try every agent, collect whatever works
+        for agent_name, agent in agents.items():
+            try:
+                print(f"   → Invoking {agent_name.title()} Agent...")
+                result = agent.process(query)
+                agent_results[agent_name] = result
+                data_count = result.get("data_count", 0) or result.get("event_count", 0)
+                print(f"     ✓ Retrieved {data_count} data points")
+            except Exception as e:
+                print(f"     ✗ {agent_name.title()} Agent failed: {e}")
+                agent_results[agent_name] = {
+                    "agent": agent_name,
+                    "answer": f"Agent unavailable: {e}",
+                    "status": "failed",
+                    "data_count": 0,
+                }
+
+        # If multiple successful results, try consensus
+        successful = {k: v for k, v in agent_results.items() if v.get("status") != "failed"}
+
+        final_response = None
+        if len(successful) > 1:
+            try:
+                print("   → Running consensus on available results...")
+                final_response = consensus_agent.process(
+                    query, agent_results, {"query_type": "complex"}
+                )
+            except Exception as e:
+                print(f"     ✗ Consensus failed: {e}")
+
+        # Fall back to best single agent result
+        if final_response is None:
+            for result in agent_results.values():
+                if result.get("status") != "failed":
+                    final_response = result
+                    break
+
+        if final_response is None:
+            final_response = {
+                "answer": (
+                    f"System degraded. Primary orchestrator error: {error_msg}. "
+                    "All agents failed to produce results."
+                ),
+                "status": "degraded",
+            }
+
+        end_time = datetime.now()
+        return {
+            "query": query,
+            "timestamp": start_time.isoformat(),
+            "execution_time_seconds": (end_time - start_time).total_seconds(),
+            "agent_results": agent_results,
+            "final_response": final_response,
+            "metadata": {
+                "agents_used": list(agent_results.keys()),
+                "orchestrator": "backup_flight_agent",
+                "primary_error": error_msg,
+            },
+        }
+
+    # ── Helper methods ──────────────────────────────────────────────────────
+
+    def get_emergency_status(self) -> List[Dict]:
+        """Get current emergency flights."""
+        return self.sql_tool.get_emergency_flights(limit=50)
+
+    def get_flights_in_disaster_area(
+        self, lat: float, lon: float, radius_deg: float = 2.0
     ) -> List[Dict]:
-        """
-        Get flights potentially affected by disaster in area
-        
-        Args:
-            lat: Disaster latitude
-            lon: Disaster longitude
-            radius_deg: Search radius in degrees
-            
-        Returns:
-            List of affected flights
-        """
+        """Get flights potentially affected by a disaster in an area."""
         return self.sql_tool.get_flights_near_location(lat, lon, radius_deg)
 
 
 if __name__ == "__main__":
-    # Test flight agent
     from config.config import Config
-    
+
     db = DatabaseManager()
     vector_db = VectorDBManager()
     agent = FlightAgent(db, vector_db)
-    
-    # Test query
+
     result = agent.process("Show me all emergency flights")
     print(json.dumps(result, indent=2, default=str))

@@ -1,740 +1,17 @@
-# # """
-# # Main Disaster Management RAG System
-# # Multimodal Agentic RAG for Flight Tracking, Weather, and Disaster Management
-# # """
-# # import sys
-# # import os
-# # from pathlib import Path
-
-# # # Add project root to path
-# # sys.path.insert(0, str(Path(__file__).parent))
-
-# # from config.config import Config
-# # from utils.database import DatabaseManager
-# # from utils.vector_db import VectorDBManager
-# # from utils.llm_client import get_llm_client
-# # from agents.orchestrator_agent import OrchestratorAgent
-# # from agents.flight_agent import FlightAgent
-# # from agents.weather_agent import WeatherAgent
-# # from agents.disaster_agent import DisasterAgent
-# # from agents.consensus_agent import ConsensusAgent
-# # import json
-# # from datetime import datetime
-# # from colorama import Fore, Style, init
-# # from fastapi import FastAPI
-# # from fastapi.middleware.cors import CORSMiddleware
-
-# # app = FastAPI()
-
-# # app.add_middleware(
-# #     CORSMiddleware,
-# #     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-# #     allow_credentials=True,
-# #     allow_methods=["*"],
-# #     allow_headers=["*"],
-# # )
-
-# # # Initialize colorama for Windows
-# # init(autoreset=True)
-
-# # class DisasterRAGSystem:
-# #     """
-# #     Main system class that coordinates all agents and manages the RAG pipeline
-# #     """
-    
-# #     def __init__(self):
-# #         print(f"{Fore.CYAN}{'='*80}")
-# #         print(f"{Fore.CYAN}🚀 Initializing Disaster Management RAG System")
-# #         print(f"{Fore.CYAN}{'='*80}\n")
-        
-# #         # Initialize core components
-# #         print(f"{Fore.YELLOW}📊 Initializing database...")
-# #         self.db = DatabaseManager()
-        
-# #         print(f"{Fore.YELLOW}🔍 Initializing vector database...")
-# #         self.vector_db = VectorDBManager()
-        
-# #         print(f"{Fore.YELLOW}🤖 Initializing LLM client...")
-# #         self.llm = get_llm_client()
-        
-# #         # Initialize agents
-# #         print(f"{Fore.YELLOW}🎯 Initializing orchestrator agent...")
-# #         self.orchestrator = OrchestratorAgent()
-        
-# #         print(f"{Fore.YELLOW}✈️  Initializing flight agent...")
-# #         self.flight_agent = FlightAgent(self.db, self.vector_db)
-        
-# #         print(f"{Fore.YELLOW}🌤️  Initializing weather agent...")
-# #         self.weather_agent = WeatherAgent(self.db, self.vector_db)
-        
-# #         print(f"{Fore.YELLOW}🔥 Initializing disaster agent...")
-# #         self.disaster_agent = DisasterAgent(self.db, self.vector_db)
-        
-# #         print(f"{Fore.YELLOW}🤝 Initializing consensus agent...")
-# #         self.consensus_agent = ConsensusAgent(self.db)
-        
-# #         print(f"\n{Fore.GREEN}✅ System initialized successfully!\n")
-    
-# #     def process_query(self, query: str) -> dict:
-# #         """
-# #         Process user query through the complete RAG pipeline
-        
-# #         Args:
-# #             query: User query string
-            
-# #         Returns:
-# #             Complete response dictionary
-# #         """
-# #         print(f"\n{Fore.CYAN}{'='*80}")
-# #         print(f"{Fore.CYAN}📝 Processing Query: {query}")
-# #         print(f"{Fore.CYAN}{'='*80}\n")
-        
-# #         start_time = datetime.now()
-        
-# #         # Step 1: Orchestration - Classify and route query
-# #         print(f"{Fore.YELLOW}Step 1: Query Classification and Routing{Style.RESET_ALL}")
-# #         routing_plan = self.orchestrator.route_query(query)
-        
-# #         query_type = routing_plan["classification"]["query_type"]
-# #         requires_consensus = routing_plan["requires_consensus"]
-        
-# #         print(f"   Query Type: {Fore.MAGENTA}{query_type}{Style.RESET_ALL}")
-# #         print(f"   Consensus Required: {Fore.MAGENTA}{requires_consensus}{Style.RESET_ALL}\n")
-        
-# #         # Step 2: Execute agents
-# #         print(f"{Fore.YELLOW}Step 2: Executing Specialized Agents{Style.RESET_ALL}")
-# #         agent_results = {}
-# #         execution_order = routing_plan["execution_order"]
-        
-# #         for agent_name in execution_order:
-# #             sub_query = routing_plan["sub_queries"].get(agent_name, query)
-            
-# #             print(f"   {Fore.CYAN}→ {agent_name.title()} Agent: {sub_query[:50]}...{Style.RESET_ALL}")
-            
-# #             # Create context with previous results
-# #             context = self.orchestrator.create_agent_context(
-# #                 sub_query,
-# #                 routing_plan["classification"],
-# #                 agent_results if agent_results else None
-# #             )
-            
-# #             # Execute appropriate agent
-# #             if agent_name == "flight":
-# #                 result = self.flight_agent.process(sub_query, context)
-# #             elif agent_name == "weather":
-# #                 result = self.weather_agent.process(sub_query, context)
-# #             elif agent_name == "disaster":
-# #                 result = self.disaster_agent.process(sub_query, context)
-# #             else:
-# #                 result = {"error": f"Unknown agent: {agent_name}"}
-            
-# #             agent_results[agent_name] = result
-            
-# #             # Print quick summary
-# #             data_count = result.get("data_count", 0) or result.get("event_count", 0)
-# #             print(f"      {Fore.GREEN}✓ Retrieved {data_count} data points{Style.RESET_ALL}")
-        
-# #         # Step 3: Consensus (if needed)
-# #         final_response = None
-        
-# #         if requires_consensus and len(agent_results) > 1:
-# #             print(f"\n{Fore.YELLOW}Step 3: Consensus and Cross-Intelligence Analysis{Style.RESET_ALL}")
-# #             consensus_result = self.consensus_agent.process(
-# #                 query,
-# #                 agent_results,
-# #                 routing_plan["classification"]
-# #             )
-# #             final_response = consensus_result
-# #             print(f"   {Fore.GREEN}✓ Cross-intelligence analysis complete{Style.RESET_ALL}")
-# #             print(f"   Correlations Found: {Fore.MAGENTA}{len(consensus_result.get('correlations', []))}{Style.RESET_ALL}")
-# #             print(f"   Severity Level: {Fore.MAGENTA}{consensus_result.get('severity_assessment', {}).get('level', 'unknown')}{Style.RESET_ALL}")
-# #         else:
-# #             print(f"\n{Fore.YELLOW}Step 3: Simple Response (No Consensus Needed){Style.RESET_ALL}")
-# #             # Single agent response
-# #             primary_agent = routing_plan["classification"]["primary_agent"]
-# #             final_response = agent_results.get(primary_agent, {})
-        
-# #         # Calculate execution time
-# #         end_time = datetime.now()
-# #         execution_time = (end_time - start_time).total_seconds()
-        
-# #         print(f"\n{Fore.GREEN}✅ Query processing complete in {execution_time:.2f}s{Style.RESET_ALL}\n")
-        
-# #         return {
-# #             "query": query,
-# #             "timestamp": start_time.isoformat(),
-# #             "execution_time_seconds": execution_time,
-# #             "routing_plan": routing_plan,
-# #             "agent_results": agent_results,
-# #             "final_response": final_response,
-# #             "metadata": {
-# #                 "query_type": query_type,
-# #                 "agents_used": list(agent_results.keys()),
-# #                 "consensus_applied": requires_consensus
-# #             }
-# #         }
-    
-# #     def load_adsb_data(self, excel_path: str = None):
-# #         """Load ADS-B data from Excel file"""
-# #         excel_path = excel_path or Config.ADSB_DATA_PATH
-        
-# #         if not os.path.exists(excel_path):
-# #             print(f"{Fore.RED}❌ ADS-B data file not found: {excel_path}{Style.RESET_ALL}")
-# #             return False
-        
-# #         print(f"\n{Fore.CYAN}Loading ADS-B data from: {excel_path}{Style.RESET_ALL}")
-# #         self.db.load_adsb_data(excel_path)
-        
-# #         # Also add to vector database (sample)
-# #         flights = self.db.execute_query(
-# #             "SELECT * FROM aircraft WHERE flight IS NOT NULL LIMIT 100"
-# #         )
-        
-# #         if flights:
-# #             self.vector_db.add_flight_data(flights)
-# #             print(f"{Fore.GREEN}✅ ADS-B data loaded into both SQL and vector databases{Style.RESET_ALL}\n")
-        
-# #         return True
-    
-# #     def load_disaster_data(self):
-# #         """Load current disaster data from APIs"""
-# #         print(f"\n{Fore.CYAN}Loading current disaster events...{Style.RESET_ALL}")
-        
-# #         events = self.disaster_agent.api_tool.get_active_events(limit=50)
-        
-# #         for event in events:
-# #             self.db.insert_disaster_event(event)
-# #             self.vector_db.add_disaster_event(event)
-        
-# #         print(f"{Fore.GREEN}✅ Loaded {len(events)} disaster events{Style.RESET_ALL}\n")
-    
-# #     def interactive_mode(self):
-# #         """Run system in interactive chat mode"""
-# #         print(f"\n{Fore.CYAN}{'='*80}")
-# #         print(f"{Fore.CYAN}💬 Interactive Mode - Disaster Management RAG Chatbot")
-# #         print(f"{Fore.CYAN}{'='*80}\n")
-# #         print(f"{Fore.YELLOW}Commands:")
-# #         print(f"  - Type your question about flights, weather, or disasters")
-# #         print(f"  - 'load data' - Load ADS-B and disaster data")
-# #         print(f"  - 'stats' - Show system statistics")
-# #         print(f"  - 'exit' or 'quit' - Exit the system")
-# #         print(f"{Style.RESET_ALL}\n")
-        
-# #         while True:
-# #             try:
-# #                 user_input = input(f"{Fore.GREEN}You: {Style.RESET_ALL}").strip()
-                
-# #                 if not user_input:
-# #                     continue
-                
-# #                 if user_input.lower() in ['exit', 'quit', 'q']:
-# #                     print(f"\n{Fore.CYAN}👋 Goodbye!{Style.RESET_ALL}\n")
-# #                     break
-                
-# #                 elif user_input.lower() == 'load data':
-# #                     self.load_adsb_data()
-# #                     self.load_disaster_data()
-# #                     continue
-                
-# #                 elif user_input.lower() == 'stats':
-# #                     self.show_statistics()
-# #                     continue
-                
-# #                 # Process query
-# #                 result = self.process_query(user_input)
-                
-# #                 # Display response
-# #                 print(f"\n{Fore.CYAN}{'─'*80}")
-# #                 print(f"{Fore.CYAN}Assistant:{Style.RESET_ALL}\n")
-                
-# #                 if "unified_response" in result.get("final_response", {}):
-# #                     # Consensus response
-# #                     print(result["final_response"]["unified_response"])
-# #                 elif "answer" in result.get("final_response", {}):
-# #                     # Single agent response
-# #                     print(result["final_response"]["answer"])
-# #                 else:
-# #                     print(f"{Fore.RED}Error: Unable to generate response{Style.RESET_ALL}")
-                
-# #                 print(f"\n{Fore.CYAN}{'─'*80}{Style.RESET_ALL}\n")
-                
-# #             except KeyboardInterrupt:
-# #                 print(f"\n\n{Fore.CYAN}👋 Goodbye!{Style.RESET_ALL}\n")
-# #                 break
-# #             except Exception as e:
-# #                 print(f"\n{Fore.RED}❌ Error: {e}{Style.RESET_ALL}\n")
-    
-# #     def show_statistics(self):
-# #         """Show system statistics"""
-# #         print(f"\n{Fore.CYAN}{'='*80}")
-# #         print(f"{Fore.CYAN}📊 System Statistics")
-# #         print(f"{Fore.CYAN}{'='*80}{Style.RESET_ALL}\n")
-        
-# #         # Database stats
-# #         aircraft_count = self.db.execute_query("SELECT COUNT(*) as count FROM aircraft")[0]["count"]
-# #         disaster_count = self.db.execute_query("SELECT COUNT(*) as count FROM disaster_events")[0]["count"]
-# #         weather_count = self.db.execute_query("SELECT COUNT(*) as count FROM weather_events")[0]["count"]
-        
-# #         print(f"  {Fore.YELLOW}Database Records:{Style.RESET_ALL}")
-# #         print(f"    Aircraft: {Fore.MAGENTA}{aircraft_count}{Style.RESET_ALL}")
-# #         print(f"    Disaster Events: {Fore.MAGENTA}{disaster_count}{Style.RESET_ALL}")
-# #         print(f"    Weather Events: {Fore.MAGENTA}{weather_count}{Style.RESET_ALL}\n")
-        
-# #         # Vector DB stats
-# #         print(f"  {Fore.YELLOW}Vector Database Collections:{Style.RESET_ALL}")
-# #         print(f"    Flights: {Fore.MAGENTA}{self.vector_db.get_collection_count('flights')}{Style.RESET_ALL}")
-# #         print(f"    Weather: {Fore.MAGENTA}{self.vector_db.get_collection_count('weather')}{Style.RESET_ALL}")
-# #         print(f"    Disasters: {Fore.MAGENTA}{self.vector_db.get_collection_count('disasters')}{Style.RESET_ALL}\n")
-        
-# #         print(f"{Fore.CYAN}{'='*80}{Style.RESET_ALL}\n")
-
-
-# # def main():
-# #     """Main entry point"""
-# #     print(f"""
-# # {Fore.CYAN}╔════════════════════════════════════════════════════════════════╗
-# # ║                                                                ║
-# # ║        Disaster Management Multimodal Agentic RAG System      ║
-# # ║                                                                ║
-# # ║  Flight Tracking • Weather Analysis • Disaster Monitoring     ║
-# # ║                                                                ║
-# # ╚════════════════════════════════════════════════════════════════╝{Style.RESET_ALL}
-# # """)
-    
-# #     # Initialize system
-# #     system = DisasterRAGSystem()
-    
-# #     # Check if data should be loaded
-# #     print(f"{Fore.YELLOW}Would you like to load initial data? (y/n): {Style.RESET_ALL}", end="")
-# #     response = input().strip().lower()
-    
-# #     if response == 'y':
-# #         system.load_adsb_data()
-# #         system.load_disaster_data()
-    
-# #     # Run interactive mode
-# #     system.interactive_mode()
-
-
-# # if __name__ == "__main__":
-# #     main()
-
-
-
-# """
-# Main Disaster Management RAG System
-# Multimodal Agentic RAG for Flight Tracking, Weather, and Disaster Management
-
-# ✅ Supports BOTH:
-# 1) FastAPI backend (for React UI):   uvicorn main:app --reload --host 127.0.0.1 --port 8000
-# 2) CLI interactive mode:            python main.py
-# """
-# import sys
-# import os
-# from pathlib import Path
-# from datetime import datetime
-# from typing import Optional, Dict, Any, List
-
-# # Add project root to path (so imports work)
-# sys.path.insert(0, str(Path(__file__).parent))
-
-# from fastapi import FastAPI, Query
-# from fastapi.middleware.cors import CORSMiddleware
-# from pydantic import BaseModel
-# from colorama import Fore, Style, init
-
-# from config.config import Config
-# from utils.database import DatabaseManager
-# from utils.vector_db import VectorDBManager
-# from utils.llm_client import get_llm_client
-# from agents.orchestrator_agent import OrchestratorAgent
-# from agents.flight_agent import FlightAgent
-# from agents.weather_agent import WeatherAgent
-# from agents.disaster_agent import DisasterAgent
-# from agents.consensus_agent import ConsensusAgent
-
-# # Initialize colorama
-# init(autoreset=True)
-
-# # ----------------------------
-# # FASTAPI APP
-# # ----------------------------
-# app = FastAPI(title="Disaster RAG Backend", version="1.0")
-
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
-
-
-# # ----------------------------
-# # MAIN SYSTEM
-# # ----------------------------
-# class DisasterRAGSystem:
-#     def __init__(self):
-#         print(f"{Fore.CYAN}{'='*80}")
-#         print(f"{Fore.CYAN}🚀 Initializing Disaster Management RAG System")
-#         print(f"{Fore.CYAN}{'='*80}\n")
-
-#         print(f"{Fore.YELLOW}📊 Initializing database...")
-#         self.db = DatabaseManager()
-
-#         print(f"{Fore.YELLOW}🔍 Initializing vector database...")
-#         self.vector_db = VectorDBManager()
-
-#         print(f"{Fore.YELLOW}🤖 Initializing LLM client...")
-#         self.llm = get_llm_client()
-
-#         print(f"{Fore.YELLOW}🎯 Initializing orchestrator agent...")
-#         self.orchestrator = OrchestratorAgent()
-
-#         print(f"{Fore.YELLOW}✈️  Initializing flight agent...")
-#         self.flight_agent = FlightAgent(self.db, self.vector_db)
-
-#         print(f"{Fore.YELLOW}🌤️  Initializing weather agent...")
-#         self.weather_agent = WeatherAgent(self.db, self.vector_db)
-
-#         print(f"{Fore.YELLOW}🔥 Initializing disaster agent...")
-#         self.disaster_agent = DisasterAgent(self.db, self.vector_db)
-
-#         print(f"{Fore.YELLOW}🤝 Initializing consensus agent...")
-#         self.consensus_agent = ConsensusAgent(self.db)
-
-#         print(f"\n{Fore.GREEN}✅ System initialized successfully!\n")
-
-#     def process_query(self, query: str) -> dict:
-#         print(f"\n{Fore.CYAN}{'='*80}")
-#         print(f"{Fore.CYAN}📝 Processing Query: {query}")
-#         print(f"{Fore.CYAN}{'='*80}\n")
-
-#         start_time = datetime.now()
-
-#         routing_plan = self.orchestrator.route_query(query)
-#         query_type = routing_plan["classification"]["query_type"]
-#         requires_consensus = routing_plan["requires_consensus"]
-
-#         agent_results = {}
-#         for agent_name in routing_plan["execution_order"]:
-#             sub_query = routing_plan["sub_queries"].get(agent_name, query)
-
-#             context = self.orchestrator.create_agent_context(
-#                 sub_query,
-#                 routing_plan["classification"],
-#                 agent_results if agent_results else None,
-#             )
-
-#             if agent_name == "flight":
-#                 result = self.flight_agent.process(sub_query, context)
-#             elif agent_name == "weather":
-#                 result = self.weather_agent.process(sub_query, context)
-#             elif agent_name == "disaster":
-#                 result = self.disaster_agent.process(sub_query, context)
-#             else:
-#                 result = {"error": f"Unknown agent: {agent_name}"}
-
-#             agent_results[agent_name] = result
-
-#         if requires_consensus and len(agent_results) > 1:
-#             final_response = self.consensus_agent.process(
-#                 query,
-#                 agent_results,
-#                 routing_plan["classification"],
-#             )
-#         else:
-#             primary_agent = routing_plan["classification"]["primary_agent"]
-#             final_response = agent_results.get(primary_agent, {})
-
-#         execution_time = (datetime.now() - start_time).total_seconds()
-
-#         return {
-#             "query": query,
-#             "timestamp": start_time.isoformat(),
-#             "execution_time_seconds": execution_time,
-#             "routing_plan": routing_plan,
-#             "agent_results": agent_results,
-#             "final_response": final_response,
-#             "metadata": {
-#                 "query_type": query_type,
-#                 "agents_used": list(agent_results.keys()),
-#                 "consensus_applied": requires_consensus,
-#             },
-#         }
-
-#     def load_adsb_data(self, excel_path: str = None):
-#         excel_path = excel_path or Config.ADSB_DATA_PATH
-#         if not os.path.exists(excel_path):
-#             print(f"{Fore.RED}❌ ADS-B data file not found: {excel_path}{Style.RESET_ALL}")
-#             return False
-
-#         print(f"\n{Fore.CYAN}Loading ADS-B data from: {excel_path}{Style.RESET_ALL}")
-#         self.db.load_adsb_data(excel_path)
-
-#         flights = self.db.execute_query("SELECT * FROM aircraft WHERE flight IS NOT NULL LIMIT 100")
-#         if flights:
-#             self.vector_db.add_flight_data(flights)
-#             print(f"{Fore.GREEN}✅ ADS-B loaded into SQL + vector DB{Style.RESET_ALL}\n")
-#         return True
-
-#     def load_disaster_data(self):
-#         print(f"\n{Fore.CYAN}Loading current disaster events...{Style.RESET_ALL}")
-#         events = self.disaster_agent.api_tool.get_active_events(limit=50)
-#         for event in events:
-#             self.db.insert_disaster_event(event)
-#             self.vector_db.add_disaster_event(event)
-#         print(f"{Fore.GREEN}✅ Loaded {len(events)} disaster events{Style.RESET_ALL}\n")
-
-#     def interactive_mode(self):
-#         print(f"\n{Fore.CYAN}{'='*80}")
-#         print(f"{Fore.CYAN}💬 Interactive Mode - Disaster Management RAG Chatbot")
-#         print(f"{Fore.CYAN}{'='*80}{Style.RESET_ALL}\n")
-
-#         while True:
-#             try:
-#                 user_input = input(f"{Fore.GREEN}You: {Style.RESET_ALL}").strip()
-#                 if not user_input:
-#                     continue
-#                 if user_input.lower() in ["exit", "quit", "q"]:
-#                     print(f"\n{Fore.CYAN}👋 Goodbye!{Style.RESET_ALL}\n")
-#                     break
-
-#                 if user_input.lower() == "load data":
-#                     self.load_adsb_data()
-#                     self.load_disaster_data()
-#                     continue
-
-#                 result = self.process_query(user_input)
-#                 final = result.get("final_response", {}) or {}
-#                 print("\nAssistant:\n")
-
-#                 if "unified_response" in final:
-#                     print(final["unified_response"])
-#                 elif "answer" in final:
-#                     print(final["answer"])
-#                 else:
-#                     print("No response generated")
-
-#             except KeyboardInterrupt:
-#                 print(f"\n\n{Fore.CYAN}👋 Goodbye!{Style.RESET_ALL}\n")
-#                 break
-#             except Exception as e:
-#                 print(f"\n{Fore.RED}❌ Error: {e}{Style.RESET_ALL}\n")
-
-
-# # ----------------------------
-# # SINGLETON SYSTEM
-# # ----------------------------
-# system = DisasterRAGSystem()
-
-
-# # ----------------------------
-# # API MODELS
-# # ----------------------------
-# class ChatRequest(BaseModel):
-#     question: str
-#     date_key: Optional[str] = None
-
-
-# # ----------------------------
-# # HEALTH
-# # ----------------------------
-# @app.get("/")
-# @app.get("/health")
-# def health():
-#     return {"ok": True, "service": "disaster-rag", "time": datetime.now().isoformat()}
-
-
-# # ----------------------------
-# # CHAT ENDPOINT
-# # ----------------------------
-# @app.post("/chat")
-# def chat(req: ChatRequest):
-#     result = system.process_query(req.question)
-#     final = result.get("final_response") or {}
-
-#     answer = final.get("unified_response") or final.get("answer") or "No answer generated"
-
-#     return {
-#         "answer": answer,
-#         "meta": {
-#             "agent_used": result.get("metadata", {}).get("agents_used", []),
-#             "query_type": result.get("metadata", {}).get("query_type"),
-#             "citations": final.get("citations", []),
-#         },
-#     }
-
-
-# # ----------------------------
-# # OPTIONAL: CHAT HISTORY
-# # ----------------------------
-# @app.get("/chats/{date_key}")
-# def get_chats(date_key: str):
-#     # TODO: if you store chats in DB, fetch here
-#     return {"messages": []}
-
-
-# # ==========================================================
-# # ✅ VISUALIZATION ENDPOINTS (NO HARDCODE)
-# # ==========================================================
-
-# @app.get("/viz/events/summary")
-# def viz_events_summary(limit: int = 10):
-#     """
-#     Returns chart-ready data: [{name: "...", count: 12}, ...]
-#     NOTE: adjust column names if your DB schema differs.
-#     """
-#     # Try most common column name patterns:
-#     # (1) event_type
-#     try:
-#         rows = system.db.execute_query(f"""
-#             SELECT event_type as name, COUNT(*) as count
-#             FROM disaster_events
-#             GROUP BY event_type
-#             ORDER BY count DESC
-#             LIMIT {limit}
-#         """)
-#         return rows
-#     except Exception:
-#         # (2) type
-#         rows = system.db.execute_query(f"""
-#             SELECT type as name, COUNT(*) as count
-#             FROM disaster_events
-#             GROUP BY type
-#             ORDER BY count DESC
-#             LIMIT {limit}
-#         """)
-#         return rows
-
-
-# @app.get("/viz/flights/top-flights")
-# def viz_flights_top_flights(limit: int = 10):
-#     rows = system.db.execute_query(f"""
-#         SELECT aircraft__flight as name, COUNT(*) as count
-#         FROM aircraft
-#         WHERE aircraft__flight IS NOT NULL AND TRIM(aircraft__flight) != ''
-#         GROUP BY aircraft__flight
-#         ORDER BY count DESC
-#         LIMIT {limit}
-#     """)
-#     return rows
-
-
-
-# # @app.get("/viz/flights/near")
-# # def viz_flights_near(
-# #     lat: float = Query(...),
-# #     lon: float = Query(...),
-# #     radius_km: float = 50.0,
-# #     limit: int = 200,
-# # ):
-# #     """
-# #     Flights near a point using bounding box (simple + fast).
-# #     Returns raw flight rows (you can chart them on frontend).
-# #     Needs aircraft table having latitude/longitude columns.
-# #     """
-# #     # bounding box approx:
-# #     # 1 deg lat ≈ 111 km
-# #     lat_delta = radius_km / 111.0
-# #     # lon delta depends on latitude
-# #     import math
-# #     lon_delta = radius_km / (111.0 * max(0.1, math.cos(math.radians(lat))))
-
-# #     min_lat, max_lat = lat - lat_delta, lat + lat_delta
-# #     min_lon, max_lon = lon - lon_delta, lon + lon_delta
-
-# #     # try common lat/lon column names: latitude/longitude OR lat/lon
-# #     try:
-# #         rows = system.db.execute_query(f"""
-# #             SELECT *
-# #             FROM aircraft
-# #             WHERE latitude BETWEEN {min_lat} AND {max_lat}
-# #               AND longitude BETWEEN {min_lon} AND {max_lon}
-# #             LIMIT {limit}
-# #         """)
-# #         return {"count": len(rows), "rows": rows}
-# #     except Exception:
-# #         rows = system.db.execute_query(f"""
-# #             SELECT *
-# #             FROM aircraft
-# #             WHERE lat BETWEEN {min_lat} AND {max_lat}
-# #               AND lon BETWEEN {min_lon} AND {max_lon}
-# #             LIMIT {limit}
-# #         """)
-# #         return {"count": len(rows), "rows": rows}
-# @app.get("/viz/flights/near")
-# def viz_flights_near(
-#     lat: float = Query(...),
-#     lon: float = Query(...),
-#     radius_km: float = 50.0,
-#     limit: int = 200,
-# ):
-#     import math
-#     lat_delta = radius_km / 111.0
-#     lon_delta = radius_km / (111.0 * max(0.1, math.cos(math.radians(lat))))
-
-#     min_lat, max_lat = lat - lat_delta, lat + lat_delta
-#     min_lon, max_lon = lon - lon_delta, lon + lon_delta
-
-#     rows = system.db.execute_query("""
-#         SELECT *
-#         FROM aircraft
-#         WHERE aircraft__lat BETWEEN ? AND ?
-#           AND aircraft__lon BETWEEN ? AND ?
-#         LIMIT ?
-#     """, (min_lat, max_lat, min_lon, max_lon, limit))
-
-#     return {"count": len(rows), "rows": rows}
-
-
-
-# # ----------------------------
-# # CLI MODE
-# # ----------------------------
-# def main():
-#     print(f"""
-# {Fore.CYAN}╔════════════════════════════════════════════════════════════════╗
-# ║        Disaster Management Multimodal Agentic RAG System        ║
-# ║        Flight Tracking • Weather Analysis • Disaster Monitoring  ║
-# ╚════════════════════════════════════════════════════════════════╝{Style.RESET_ALL}
-# """)
-
-#     print(f"{Fore.YELLOW}Would you like to load initial data? (y/n): {Style.RESET_ALL}", end="")
-#     response = input().strip().lower()
-
-#     if response == "y":
-#         system.load_adsb_data()
-#         system.load_disaster_data()
-
-#     system.interactive_mode()
-
-
-# if __name__ == "__main__":
-#     main()
-
 """
 Main Disaster Management RAG System
-Multimodal Agentic RAG for Flight Tracking, Weather, and Disaster Management
-
-✅ Supports BOTH:
-1) FastAPI backend (for React UI):   uvicorn main:app --reload --host 127.0.0.1 --port 8000
-2) CLI interactive mode:            python main.py
+Multimodal Agentic RAG with CrewAI + DSPy
+Flight Tracking • Weather Analysis • Disaster Monitoring
 """
-
 import sys
 import os
 from pathlib import Path
-from datetime import datetime
-from typing import Optional
 
-# Add project root to path (so imports work)
+os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
+os.environ.setdefault("USE_TF", "0")
+
+# Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
-
-from fastapi import FastAPI, Query
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from colorama import Fore, Style, init
 
 from config.config import Config
 from utils.database import DatabaseManager
@@ -745,32 +22,53 @@ from agents.flight_agent import FlightAgent
 from agents.weather_agent import WeatherAgent
 from agents.disaster_agent import DisasterAgent
 from agents.consensus_agent import ConsensusAgent
+from ingestion.scheduler import IngestionScheduler
+import json
+import logging
+from datetime import datetime
+from colorama import Fore, Style, init
+from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Optional
+try:
+    from supabase import create_client, Client as _SupabaseClient
+    _SUPABASE_AVAILABLE = True
+except ImportError:
+    _SUPABASE_AVAILABLE = False
+    _SupabaseClient = None
 
-# Initialize colorama
-init(autoreset=True)
 
-# ----------------------------
-# FASTAPI APP
-# ----------------------------
-app = FastAPI(title="Disaster RAG Backend", version="1.0")
+app = FastAPI()
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
+supabase = None
+if _SUPABASE_AVAILABLE and SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
+    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[  "http://localhost:3000","http://127.0.0.1:3000","http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ----------------------------
-# MAIN SYSTEM
-# ----------------------------
+# Initialize colorama for Windows
+init(autoreset=True)
+
+
 class DisasterRAGSystem:
+    """
+    Main system class that coordinates all agents via the hub orchestrator.
+    """
+
     def __init__(self):
         print(f"{Fore.CYAN}{'='*80}")
-        print(f"{Fore.CYAN}🚀 Initializing Disaster Management RAG System")
+        print(f"{Fore.CYAN}🚀 Initializing Disaster Management RAG System (CrewAI + DSPy)")
         print(f"{Fore.CYAN}{'='*80}\n")
 
+        # Core components
         print(f"{Fore.YELLOW}📊 Initializing database...")
         self.db = DatabaseManager()
 
@@ -780,83 +78,57 @@ class DisasterRAGSystem:
         print(f"{Fore.YELLOW}🤖 Initializing LLM client...")
         self.llm = get_llm_client()
 
-        print(f"{Fore.YELLOW}🎯 Initializing orchestrator agent...")
-        self.orchestrator = OrchestratorAgent()
-
-        print(f"{Fore.YELLOW}✈️  Initializing flight agent...")
+        # Sub-agents (CrewAI-based)
+        print(f"{Fore.YELLOW}✈️  Initializing Flight Agent (CrewAI)...")
         self.flight_agent = FlightAgent(self.db, self.vector_db)
 
-        print(f"{Fore.YELLOW}🌤️  Initializing weather agent...")
+        print(f"{Fore.YELLOW}🌤️  Initializing Weather Agent (CrewAI)...")
         self.weather_agent = WeatherAgent(self.db, self.vector_db)
 
-        print(f"{Fore.YELLOW}🔥 Initializing disaster agent...")
+        print(f"{Fore.YELLOW}🔥 Initializing Disaster Agent (CrewAI)...")
         self.disaster_agent = DisasterAgent(self.db, self.vector_db)
 
-        print(f"{Fore.YELLOW}🤝 Initializing consensus agent...")
+        print(f"{Fore.YELLOW}🤝 Initializing Consensus Agent (DSPy)...")
         self.consensus_agent = ConsensusAgent(self.db)
+
+        # Hub orchestrator — holds direct connections to every sub-agent
+        print(f"{Fore.YELLOW}🎯 Initializing Hub Orchestrator...")
+        self.orchestrator = OrchestratorAgent(
+            flight_agent=self.flight_agent,
+            weather_agent=self.weather_agent,
+            disaster_agent=self.disaster_agent,
+            consensus_agent=self.consensus_agent,
+        )
+
+        # Ingestion scheduler (started later via FastAPI lifecycle)
+        self.scheduler = IngestionScheduler(self.db)
 
         print(f"\n{Fore.GREEN}✅ System initialized successfully!\n")
 
     def process_query(self, query: str) -> dict:
+        """
+        Process user query through the hub orchestrator.
+        The orchestrator handles classification, agent invocation (with retry),
+        re-invocation, consensus, and fallback — all internally.
+        """
         print(f"\n{Fore.CYAN}{'='*80}")
         print(f"{Fore.CYAN}📝 Processing Query: {query}")
         print(f"{Fore.CYAN}{'='*80}\n")
 
-        start_time = datetime.now()
+        result = self.orchestrator.process_query(query)
 
-        routing_plan = self.orchestrator.route_query(query)
-        query_type = routing_plan["classification"]["query_type"]
-        requires_consensus = routing_plan["requires_consensus"]
+        # Display summary
+        meta = result.get("metadata", {})
+        print(f"{Fore.GREEN}   Agents used: {meta.get('agents_used', [])}")
+        print(f"   Consensus: {meta.get('consensus_applied', False)}")
+        print(f"   Orchestrator: {meta.get('orchestrator', 'primary')}{Style.RESET_ALL}")
 
-        agent_results = {}
+        return result
 
-        for agent_name in routing_plan["execution_order"]:
-            sub_query = routing_plan.get("sub_queries", {}).get(agent_name, query)
-
-            context = self.orchestrator.create_agent_context(
-                sub_query,
-                routing_plan["classification"],
-                agent_results if agent_results else None,
-            )
-
-            if agent_name == "flight":
-                result = self.flight_agent.process(sub_query, context)
-            elif agent_name == "weather":
-                result = self.weather_agent.process(sub_query, context)
-            elif agent_name == "disaster":
-                result = self.disaster_agent.process(sub_query, context)
-            else:
-                result = {"error": f"Unknown agent: {agent_name}"}
-
-            agent_results[agent_name] = result
-
-        if requires_consensus and len(agent_results) > 1:
-            final_response = self.consensus_agent.process(
-                query,
-                agent_results,
-                routing_plan["classification"],
-            )
-        else:
-            primary_agent = routing_plan["classification"]["primary_agent"]
-            final_response = agent_results.get(primary_agent, {})
-
-        execution_time = (datetime.now() - start_time).total_seconds()
-
-        return {
-            "query": query,
-            "timestamp": start_time.isoformat(),
-            "execution_time_seconds": execution_time,
-            "routing_plan": routing_plan,
-            "agent_results": agent_results,
-            "final_response": final_response,
-            "metadata": {
-                "query_type": query_type,
-                "agents_used": list(agent_results.keys()),
-                "consensus_applied": requires_consensus,
-            },
-        }
+    # ── Data loading helpers ────────────────────────────────────────────────
 
     def load_adsb_data(self, excel_path: str = None):
+        """Load ADS-B data from Excel file."""
         excel_path = excel_path or Config.ADSB_DATA_PATH
 
         if not os.path.exists(excel_path):
@@ -867,55 +139,121 @@ class DisasterRAGSystem:
         self.db.load_adsb_data(excel_path)
 
         flights = self.db.execute_query(
-            "SELECT * FROM aircraft WHERE aircraft__flight IS NOT NULL LIMIT 100"
+            "SELECT * FROM aircraft WHERE flight IS NOT NULL LIMIT 100"
         )
         if flights:
             self.vector_db.add_flight_data(flights)
-            print(f"{Fore.GREEN}✅ ADS-B loaded into SQL + vector DB{Style.RESET_ALL}\n")
+            print(f"{Fore.GREEN}✅ ADS-B data loaded into SQL and vector databases{Style.RESET_ALL}\n")
 
         return True
 
     def load_disaster_data(self):
+        """Load current disaster data from APIs."""
         print(f"\n{Fore.CYAN}Loading current disaster events...{Style.RESET_ALL}")
-        events = self.disaster_agent.api_tool.get_active_events(limit=50)
 
+        events = self.disaster_agent.api_tool.get_active_events(limit=50)
         for event in events:
             self.db.insert_disaster_event(event)
             self.vector_db.add_disaster_event(event)
 
-        print(f"{Fore.GREEN}✅ Loaded {len(events)} disaster events{Style.RESET_ALL}\n")
+        # Fetch weather-specific categories separately from EONET
+        _WEATHER_CATS = ["severeStorms", "floods", "drought", "snow",
+                         "tempExtremes", "dustHaze"]
+        weather_count = 0
+        seen_ids = set()
+        for cat in _WEATHER_CATS:
+            cat_events = self.disaster_agent.api_tool.get_events_by_category(cat, limit=20)
+            for event in cat_events:
+                eid = event.get("event_id")
+                if eid in seen_ids:
+                    continue
+                seen_ids.add(eid)
+                # Insert into disaster_events as well (idempotent via REPLACE)
+                self.db.insert_disaster_event(event)
+                self.db.insert_weather_event({
+                    "event_id": eid,
+                    "event_type": event.get("event_type", cat),
+                    "title": event.get("title"),
+                    "description": event.get("description"),
+                    "lat": event.get("lat"),
+                    "lon": event.get("lon"),
+                    "location_name": None,
+                    "severity": None,
+                    "start_time": event.get("start_date"),
+                    "end_time": None,
+                    "source": "eonet",
+                    "metadata": {"sources": event.get("sources", []),
+                                 "categories": event.get("categories", [])},
+                })
+                weather_count += 1
+
+        print(f"{Fore.GREEN}✅ Loaded {len(events)} disaster events, {weather_count} weather events{Style.RESET_ALL}\n")
+
+    def show_statistics(self):
+        """Show system statistics."""
+        print(f"\n{Fore.CYAN}{'='*80}")
+        print(f"{Fore.CYAN}📊 System Statistics")
+        print(f"{Fore.CYAN}{'='*80}{Style.RESET_ALL}\n")
+
+        aircraft_count = self.db.execute_query("SELECT COUNT(*) as count FROM aircraft")[0]["count"]
+        disaster_count = self.db.execute_query("SELECT COUNT(*) as count FROM disaster_events")[0]["count"]
+        weather_count = self.db.execute_query("SELECT COUNT(*) as count FROM weather_events")[0]["count"]
+
+        print(f"  {Fore.YELLOW}Database Records:{Style.RESET_ALL}")
+        print(f"    Aircraft:        {Fore.MAGENTA}{aircraft_count}{Style.RESET_ALL}")
+        print(f"    Disaster Events: {Fore.MAGENTA}{disaster_count}{Style.RESET_ALL}")
+        print(f"    Weather Events:  {Fore.MAGENTA}{weather_count}{Style.RESET_ALL}\n")
+
+        print(f"  {Fore.YELLOW}Vector Database Collections:{Style.RESET_ALL}")
+        print(f"    Flights:   {Fore.MAGENTA}{self.vector_db.get_collection_count('flights')}{Style.RESET_ALL}")
+        print(f"    Weather:   {Fore.MAGENTA}{self.vector_db.get_collection_count('weather')}{Style.RESET_ALL}")
+        print(f"    Disasters: {Fore.MAGENTA}{self.vector_db.get_collection_count('disasters')}{Style.RESET_ALL}\n")
 
     def interactive_mode(self):
+        """Run system in interactive chat mode."""
         print(f"\n{Fore.CYAN}{'='*80}")
         print(f"{Fore.CYAN}💬 Interactive Mode - Disaster Management RAG Chatbot")
-        print(f"{Fore.CYAN}{'='*80}{Style.RESET_ALL}\n")
-        print(f"{Fore.YELLOW}Type 'load data' to load ADS-B + disaster events.{Style.RESET_ALL}\n")
+        print(f"{Fore.CYAN}{'='*80}\n")
+        print(f"{Fore.YELLOW}Commands:")
+        print(f"  - Type your question about flights, weather, or disasters")
+        print(f"  - 'load data' - Load ADS-B and disaster data")
+        print(f"  - 'stats' - Show system statistics")
+        print(f"  - 'exit' or 'quit' - Exit the system")
+        print(f"{Style.RESET_ALL}\n")
 
         while True:
             try:
                 user_input = input(f"{Fore.GREEN}You: {Style.RESET_ALL}").strip()
+
                 if not user_input:
                     continue
 
                 if user_input.lower() in ["exit", "quit", "q"]:
                     print(f"\n{Fore.CYAN}👋 Goodbye!{Style.RESET_ALL}\n")
                     break
-
-                if user_input.lower() == "load data":
+                elif user_input.lower() == "load data":
                     self.load_adsb_data()
                     self.load_disaster_data()
                     continue
+                elif user_input.lower() == "stats":
+                    self.show_statistics()
+                    continue
 
                 result = self.process_query(user_input)
-                final = result.get("final_response", {}) or {}
 
-                print("\nAssistant:\n")
+                # Display response
+                print(f"\n{Fore.CYAN}{'─'*80}")
+                print(f"{Fore.CYAN}Assistant:{Style.RESET_ALL}\n")
+
+                final = result.get("final_response", {})
                 if "unified_response" in final:
                     print(final["unified_response"])
                 elif "answer" in final:
                     print(final["answer"])
                 else:
-                    print("No response generated")
+                    print(f"{Fore.RED}Error: Unable to generate response{Style.RESET_ALL}")
+
+                print(f"\n{Fore.CYAN}{'─'*80}{Style.RESET_ALL}\n")
 
             except KeyboardInterrupt:
                 print(f"\n\n{Fore.CYAN}👋 Goodbye!{Style.RESET_ALL}\n")
@@ -924,158 +262,131 @@ class DisasterRAGSystem:
                 print(f"\n{Fore.RED}❌ Error: {e}{Style.RESET_ALL}\n")
 
 
-# ----------------------------
-# SINGLETON SYSTEM
-# ----------------------------
-system = DisasterRAGSystem()
+# ── Singleton system instance for FastAPI ───────────────────────────────────
 
-# ----------------------------
-# API MODELS
-# ----------------------------
-class ChatRequest(BaseModel):
-    question: str
-    date_key: Optional[str] = None
+_system: DisasterRAGSystem = None
 
 
-# ----------------------------
-# HEALTH
-# ----------------------------
-@app.get("/")
-@app.get("/health")
-def health():
-    return {"ok": True, "service": "disaster-rag", "time": datetime.now().isoformat()}
+def get_system() -> DisasterRAGSystem:
+    global _system
+    if _system is None:
+        _system = DisasterRAGSystem()
+    return _system
 
 
-# ----------------------------
-# CHAT ENDPOINT
-# ----------------------------
-@app.post("/chat")
-def chat(req: ChatRequest):
-    result = system.process_query(req.question)
-    final = result.get("final_response") or {}
+# ── FastAPI endpoints ───────────────────────────────────────────────────────
 
-    answer = final.get("unified_response") or final.get("answer") or "No answer generated"
+@app.post("/api/query")
+async def api_query(payload: dict):
+    """Process a user query through the RAG system."""
+    query = payload.get("query", "")
+    if not query:
+        return {"error": "No query provided"}
+    system = get_system()
+    result = system.process_query(query)
+    return result
 
-    return {
-        "answer": answer,
-        "meta": {
-            "agent_used": result.get("metadata", {}).get("agents_used", []),
-            "query_type": result.get("metadata", {}).get("query_type"),
-            "citations": final.get("citations", []),
-        },
+
+@app.get("/api/health")
+async def health():
+    return {"status": "ok", "system": "DisasterRAG (CrewAI + DSPy)"}
+
+
+# ── FastAPI lifecycle: start / stop ingestion scheduler ─────────────────
+
+@app.on_event("startup")
+async def _startup():
+    system = get_system()
+    await system.scheduler.start()
+
+
+@app.on_event("shutdown")
+async def _shutdown():
+    global _system
+    if _system is not None:
+        await _system.scheduler.stop()
+
+class FeedbackRequest(BaseModel):
+    rating: int
+    category: str
+    comment: str
+    page: Optional[str] = None
+
+
+@app.post("/api/feedback")
+async def submit_feedback(feedback: FeedbackRequest):
+    if supabase is None:
+        return {"error": "Supabase is not configured"}
+
+    feedback_data = {
+        "rating": feedback.rating,
+        "category": feedback.category,
+        "comment": feedback.comment,
+        "page": feedback.page,
     }
 
+    response = supabase.table("feedback").insert(feedback_data).execute()
 
-# ----------------------------
-# OPTIONAL: CHAT HISTORY
-# ----------------------------
-@app.get("/chats/{date_key}")
-def get_chats(date_key: str):
-    # TODO: if you store chats in DB, fetch here
-    return {"messages": []}
+    return {
+        "message": "Feedback submitted successfully",
+        "received": response.data
+    }
+# ── Debug / inspection endpoints ────────────────────────────────────────
 
-
-# ==========================================================
-# ✅ VISUALIZATION ENDPOINTS
-# ==========================================================
-
-@app.get("/viz/events/summary")
-def viz_events_summary(limit: int = 10):
-    """
-    Returns chart-ready data: [{name: "...", count: 12}, ...]
-    """
-    try:
-        rows = system.db.execute_query(
-            f"""
-            SELECT event_type as name, COUNT(*) as count
-            FROM disaster_events
-            GROUP BY event_type
-            ORDER BY count DESC
-            LIMIT {limit}
-            """
-        )
-        return rows
-    except Exception:
-        rows = system.db.execute_query(
-            f"""
-            SELECT type as name, COUNT(*) as count
-            FROM disaster_events
-            GROUP BY type
-            ORDER BY count DESC
-            LIMIT {limit}
-            """
-        )
-        return rows
+@app.get("/api/alerts/latest")
+async def latest_alerts(limit: int = Query(50, ge=1, le=500),
+                        district: str = Query(None)):
+    db = get_system().db
+    return db.get_latest_alerts(limit=limit, district=district)
 
 
-@app.get("/viz/flights/top-flights")
-def viz_flights_top_flights(limit: int = 10):
-    rows = system.db.execute_query(
-        f"""
-        SELECT aircraft__flight as name, COUNT(*) as count
-        FROM aircraft
-        WHERE aircraft__flight IS NOT NULL AND TRIM(aircraft__flight) != ''
-        GROUP BY aircraft__flight
-        ORDER BY count DESC
-        LIMIT {limit}
-        """
-    )
-    return rows
+@app.get("/api/forecast/latest")
+async def latest_forecast(limit: int = Query(100, ge=1, le=500),
+                          location: str = Query(None)):
+    db = get_system().db
+    return db.get_latest_forecasts(limit=limit, location=location)
 
 
-@app.get("/viz/flights/near")
-def viz_flights_near(
-    lat: float = Query(...),
-    lon: float = Query(...),
-    radius_km: float = 50.0,
-    limit: int = 200,
-):
-    """
-    Flights near a point using bounding box.
-    Uses your DB schema: aircraft__lat / aircraft__lon
-    """
-    import math
-
-    lat_delta = radius_km / 111.0
-    lon_delta = radius_km / (111.0 * max(0.1, math.cos(math.radians(lat))))
-
-    min_lat, max_lat = lat - lat_delta, lat + lat_delta
-    min_lon, max_lon = lon - lon_delta, lon + lon_delta
-
-    rows = system.db.execute_query(
-        """
-        SELECT *
-        FROM aircraft
-        WHERE aircraft__lat BETWEEN ? AND ?
-          AND aircraft__lon BETWEEN ? AND ?
-        LIMIT ?
-        """,
-        (min_lat, max_lat, min_lon, max_lon, limit),
-    )
-
-    return {"count": len(rows), "rows": rows}
+@app.get("/api/rainfall/latest")
+async def latest_rainfall(limit: int = Query(50, ge=1, le=500)):
+    db = get_system().db
+    return db.get_latest_rainfall(limit=limit)
 
 
-# ----------------------------
-# CLI MODE
-# ----------------------------
+@app.get("/api/landslide/latest")
+async def latest_landslide(limit: int = Query(50, ge=1, le=500)):
+    db = get_system().db
+    return db.get_latest_landslide_snapshot(limit=limit)
+
+
+@app.get("/api/events/latest")
+async def latest_events(limit: int = Query(50, ge=1, le=500),
+                        event_type: str = Query(None)):
+    db = get_system().db
+    return db.get_latest_external_events(limit=limit, event_type=event_type)
+
+
+@app.get("/api/ingestion/status")
+async def ingestion_status(limit: int = Query(20, ge=1, le=200)):
+    db = get_system().db
+    return db.get_ingestion_status(limit=limit)
+
+
+# ── CLI entry point ────────────────────────────────────────────────────────
+
 def main():
-    print(
-        f"""
+    print(f"""
 {Fore.CYAN}╔════════════════════════════════════════════════════════════════╗
-║        Disaster Management Multimodal Agentic RAG System        ║
-║        Flight Tracking • Weather Analysis • Disaster Monitoring  ║
+║                                                                ║
+║        Disaster Management Multimodal Agentic RAG System      ║
+║              CrewAI + DSPy  •  Hub Orchestrator               ║
+║                                                                ║
+║  Flight Tracking • Weather Analysis • Disaster Monitoring     ║
+║                                                                ║
 ╚════════════════════════════════════════════════════════════════╝{Style.RESET_ALL}
-"""
-    )
+""")
 
-    print(f"{Fore.YELLOW}Would you like to load initial data? (y/n): {Style.RESET_ALL}", end="")
-    response = input().strip().lower()
-
-    if response == "y":
-        system.load_adsb_data()
-        system.load_disaster_data()
-
+    system = DisasterRAGSystem()
     system.interactive_mode()
 
 
