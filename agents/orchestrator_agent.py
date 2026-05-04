@@ -14,6 +14,9 @@ from config.config import Config
 import json
 import dspy
 from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class OrchestratorAgent:
@@ -47,59 +50,64 @@ class OrchestratorAgent:
 
     # ── Public entry point ──────────────────────────────────────────────────
 
-    def process_query(self, query: str) -> Dict[str, Any]:
+    def process_query(self, query: str, trajectory_logger=None) -> Dict[str, Any]:
         """
         Main entry point.  Runs the hub loop; on failure falls back to
         FlightAgent acting as a simplified orchestrator.
         """
         try:
-            return self._hub_process(query)
+            return self._hub_process(query, trajectory_logger)
         except Exception as e:
-            print(f"⚠️ Primary orchestrator failed: {e}")
-            print("🔄 Falling back to Flight Agent as backup orchestrator...")
-            return self._fallback_process(query, str(e))
+            logger.warning(f"⚠️ Primary orchestrator failed: {e}")
+            logger.info("🔄 Falling back to Flight Agent as backup orchestrator...")
+            return self._fallback_process(query, str(e), trajectory_logger)
 
     # ── Core hub loop ───────────────────────────────────────────────────────
 
-    def _hub_process(self, query: str) -> Dict[str, Any]:
+    def _hub_process(self, query: str, trajectory_logger) -> Dict[str, Any]:
         start_time = datetime.now()
 
         # 1 ── Classify
-        print(f"\n🎯 Orchestrator classifying query: {query}")
+        logger.info(f"\n🎯 Orchestrator classifying query: {query}")
         classification = self._classify_query(query)
 
-        print(f"📋 Classification:")
-        print(f"   Type: {classification['query_type']}")
-        print(f"   Primary Agent: {classification['primary_agent']}")
-        print(f"   Secondary Agents: {classification.get('secondary_agents', [])}")
-        print(f"   Cross-Intelligence: {classification.get('requires_cross_intelligence', False)}")
+        logger.info(f"📋 Classification:")
+        logger.info(f"   Type: {classification['query_type']}")
+        logger.info(f"   Primary Agent: {classification['primary_agent']}")
+        logger.info(f"   Secondary Agents: {classification.get('secondary_agents', [])}")
+        logger.info(f"   Cross-Intelligence: {classification.get('requires_cross_intelligence', False)}")
 
         # 1a ── Short-circuit: general/conversational queries go straight to LLM
         if classification["query_type"] == "general" or classification["primary_agent"] == "none":
-            print("💬 General query — responding directly via LLM (no agent)")
+            logger.info("💬 General query — responding directly via LLM (no agent)")
+            if trajectory_logger:
+                trajectory_logger.log_orchestrator_decision(classification, {})
             return self._handle_general_query(query, start_time)
 
         # 2 ── Decompose into sub-queries
         sub_queries = self._decompose_query(query, classification)
-        print(f"📝 Sub-queries: {list(sub_queries.keys())}")
+        logger.info(f"📝 Sub-queries: {list(sub_queries.keys())}")
+        
+        if trajectory_logger:
+            trajectory_logger.log_orchestrator_decision(classification, sub_queries)
 
         # 3 ── Execute each agent with retry
-        print("\n⚡ Executing agents...")
+        logger.info("\n⚡ Executing agents...")
         agent_results: Dict[str, Any] = {}
         execution_order = self._get_execution_order(classification, sub_queries)
 
         for agent_name in execution_order:
             sub_query = sub_queries.get(agent_name, query)
             context = self._build_context(classification, agent_results)
-            result = self._execute_with_retry(agent_name, sub_query, context)
+            result = self._execute_with_retry(agent_name, sub_query, context, trajectory_logger)
             agent_results[agent_name] = result
 
         # 4 ── Evaluate — decide if any agent needs re-invocation
         reinvocations = self._evaluate_and_reinvoke(query, agent_results, classification)
         for agent_name, refined_query in reinvocations.items():
-            print(f"   🔁 Re-invoking {agent_name.title()} Agent: {refined_query[:60]}...")
+            logger.info(f"   🔁 Re-invoking {agent_name.title()} Agent: {refined_query[:60]}...")
             context = self._build_context(classification, agent_results)
-            result = self._execute_with_retry(agent_name, refined_query, context)
+            result = self._execute_with_retry(agent_name, refined_query, context, trajectory_logger)
             agent_results[agent_name] = result  # update with refined result
 
         # 5 ── Consensus if multi-agent and cross-intelligence required
@@ -109,7 +117,7 @@ class OrchestratorAgent:
         )
 
         if requires_consensus:
-            print("\n🤝 Running consensus analysis...")
+            logger.info("\n🤝 Running consensus analysis...")
             final_response = self._execute_consensus(query, agent_results, classification)
         else:
             primary = classification["primary_agent"]
@@ -117,7 +125,7 @@ class OrchestratorAgent:
 
         end_time = datetime.now()
         execution_time = (end_time - start_time).total_seconds()
-        print(f"\n✅ Query processing complete in {execution_time:.2f}s\n")
+        logger.info(f"\n✅ Query processing complete in {execution_time:.2f}s\n")
 
         return {
             "query": query,
@@ -147,7 +155,7 @@ class OrchestratorAgent:
             )
             classification["extracted_entities"] = {}
         except Exception as e:
-            print(f"⚠️ DSPy classification failed: {e}")
+            logger.warning(f"⚠️ DSPy classification failed: {e}")
             classification = {
                 "query_type": "simple",
                 "primary_agent": "flight",
@@ -201,7 +209,7 @@ class OrchestratorAgent:
             if not sub_queries:
                 raise ValueError("No sub-queries extracted")
         except Exception as e:
-            print(f"⚠️ DSPy decomposition failed: {e}")
+            logger.warning(f"⚠️ DSPy decomposition failed: {e}")
             agents = [classification["primary_agent"]] + classification.get("secondary_agents", [])
             sub_queries = {agent: query for agent in agents}
 
@@ -222,7 +230,7 @@ class OrchestratorAgent:
         try:
             answer = self.llm.generate(query, system_prompt=general_system)
         except Exception as e:
-            print(f"⚠️ General LLM call failed: {e}")
+            logger.warning(f"⚠️ General LLM call failed: {e}")
             answer = (
                 "Hello! I'm DisasterRAG, your Disaster Management Intelligence System. "
                 "I can help you with:\n"
@@ -256,16 +264,21 @@ class OrchestratorAgent:
         agent_name: str,
         query: str,
         context: Optional[Dict] = None,
+        trajectory_logger=None
     ) -> Dict[str, Any]:
         """Execute an agent with retry logic."""
         last_error = None
 
         for attempt in range(self.MAX_RETRIES + 1):
             prefix = "🔄" if attempt > 0 else "→"
-            print(f"   {prefix} {agent_name.title()} Agent (attempt {attempt + 1}): {query[:60]}...")
+            logger.info(f"   {prefix} {agent_name.title()} Agent (attempt {attempt + 1}): {query[:60]}...")
 
             try:
-                result = self.agents[agent_name].process(query, context)
+                # Add trajectory_logger inside context to be passed to sub-agents
+                ctx_with_logger = context.copy() if context else {}
+                ctx_with_logger['trajectory_logger'] = trajectory_logger
+
+                result = self.agents[agent_name].process(query, ctx_with_logger)
 
                 # Check if result is usable
                 answer = str(result.get("answer", ""))
@@ -273,21 +286,21 @@ class OrchestratorAgent:
 
                 if answer and "Error" not in answer:
                     data_count = result.get("data_count", 0) or result.get("event_count", 0)
-                    print(f"     ✓ Retrieved {data_count} data points")
+                    logger.info(f"     ✓ Retrieved {data_count} data points")
                     return result
 
                 # Result has issues but may be partially usable
                 if attempt == self.MAX_RETRIES:
-                    print(f"     ⚠️ Returning partial result after {attempt + 1} attempts")
+                    logger.warning(f"     ⚠️ Returning partial result after {attempt + 1} attempts")
                     result["status"] = "partial"
                     return result
 
                 last_error = answer or "Empty response"
-                print(f"     ⚠️ Attempt {attempt + 1} returned errors, retrying...")
+                logger.warning(f"     ⚠️ Attempt {attempt + 1} returned errors, retrying...")
 
             except Exception as e:
                 last_error = str(e)
-                print(f"     ✗ Attempt {attempt + 1} failed: {e}")
+                logger.warning(f"     ✗ Attempt {attempt + 1} failed: {e}")
 
                 if attempt == self.MAX_RETRIES:
                     return {
@@ -317,7 +330,7 @@ class OrchestratorAgent:
             try:
                 return self.consensus_agent.process(query, agent_results, classification)
             except Exception as e:
-                print(f"     ⚠️ Consensus attempt {attempt + 1} failed: {e}")
+                logger.warning(f"     ⚠️ Consensus attempt {attempt + 1} failed: {e}")
                 if attempt == self.MAX_RETRIES:
                     # Fall back to concatenating agent answers
                     parts = []
@@ -376,16 +389,16 @@ class OrchestratorAgent:
                 return dict(list(valid.items())[: self.MAX_REINVOCATIONS])
 
         except Exception as e:
-            print(f"⚠️ Result evaluation failed: {e}")
+            logger.warning(f"⚠️ Result evaluation failed: {e}")
 
         return {}
 
     # ── Fallback orchestrator ───────────────────────────────────────────────
 
-    def _fallback_process(self, query: str, error_msg: str) -> Dict[str, Any]:
+    def _fallback_process(self, query: str, error_msg: str, trajectory_logger=None) -> Dict[str, Any]:
         """Delegate to FlightAgent as backup orchestrator."""
         return self.agents["flight"].process_as_orchestrator(
-            query, self.agents, self.consensus_agent, error_msg
+            query, self.agents, self.consensus_agent, error_msg, trajectory_logger
         )
 
     # ── Helpers ─────────────────────────────────────────────────────────────

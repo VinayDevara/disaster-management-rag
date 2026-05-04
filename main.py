@@ -27,6 +27,16 @@ import json
 import logging
 from datetime import datetime
 from colorama import Fore, Style, init
+from utils.trajectory_logger import TrajectoryLogger
+
+# Configure basic logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(message)s'  # Keep it clean for the console
+)
+logger = logging.getLogger("DisasterRAGSystem")
+
+from colorama import Fore, Style, init
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -64,35 +74,35 @@ class DisasterRAGSystem:
     """
 
     def __init__(self):
-        print(f"{Fore.CYAN}{'='*80}")
-        print(f"{Fore.CYAN}🚀 Initializing Disaster Management RAG System (CrewAI + DSPy)")
-        print(f"{Fore.CYAN}{'='*80}\n")
+        logger.info(f"{Fore.CYAN}{'='*80}")
+        logger.info(f"{Fore.CYAN}🚀 Initializing Disaster Management RAG System (CrewAI + DSPy)")
+        logger.info(f"{Fore.CYAN}{'='*80}\n")
 
         # Core components
-        print(f"{Fore.YELLOW}📊 Initializing database...")
+        logger.info(f"{Fore.YELLOW}📊 Initializing database...")
         self.db = DatabaseManager()
 
-        print(f"{Fore.YELLOW}🔍 Initializing vector database...")
+        logger.info(f"{Fore.YELLOW}🔍 Initializing vector database...")
         self.vector_db = VectorDBManager()
 
-        print(f"{Fore.YELLOW}🤖 Initializing LLM client...")
+        logger.info(f"{Fore.YELLOW}🤖 Initializing LLM client...")
         self.llm = get_llm_client()
 
         # Sub-agents (CrewAI-based)
-        print(f"{Fore.YELLOW}✈️  Initializing Flight Agent (CrewAI)...")
+        logger.info(f"{Fore.YELLOW}✈️  Initializing Flight Agent (CrewAI)...")
         self.flight_agent = FlightAgent(self.db, self.vector_db)
 
-        print(f"{Fore.YELLOW}🌤️  Initializing Weather Agent (CrewAI)...")
+        logger.info(f"{Fore.YELLOW}🌤️  Initializing Weather Agent (CrewAI)...")
         self.weather_agent = WeatherAgent(self.db, self.vector_db)
 
-        print(f"{Fore.YELLOW}🔥 Initializing Disaster Agent (CrewAI)...")
+        logger.info(f"{Fore.YELLOW}🔥 Initializing Disaster Agent (CrewAI)...")
         self.disaster_agent = DisasterAgent(self.db, self.vector_db)
 
-        print(f"{Fore.YELLOW}🤝 Initializing Consensus Agent (DSPy)...")
+        logger.info(f"{Fore.YELLOW}🤝 Initializing Consensus Agent (DSPy)...")
         self.consensus_agent = ConsensusAgent(self.db)
 
         # Hub orchestrator — holds direct connections to every sub-agent
-        print(f"{Fore.YELLOW}🎯 Initializing Hub Orchestrator...")
+        logger.info(f"{Fore.YELLOW}🎯 Initializing Hub Orchestrator...")
         self.orchestrator = OrchestratorAgent(
             flight_agent=self.flight_agent,
             weather_agent=self.weather_agent,
@@ -103,7 +113,7 @@ class DisasterRAGSystem:
         # Ingestion scheduler (started later via FastAPI lifecycle)
         self.scheduler = IngestionScheduler(self.db)
 
-        print(f"\n{Fore.GREEN}✅ System initialized successfully!\n")
+        logger.info(f"\n{Fore.GREEN}✅ System initialized successfully!\n")
 
     def process_query(self, query: str) -> dict:
         """
@@ -111,17 +121,23 @@ class DisasterRAGSystem:
         The orchestrator handles classification, agent invocation (with retry),
         re-invocation, consensus, and fallback — all internally.
         """
-        print(f"\n{Fore.CYAN}{'='*80}")
-        print(f"{Fore.CYAN}📝 Processing Query: {query}")
-        print(f"{Fore.CYAN}{'='*80}\n")
+        logger.info(f"\n{Fore.CYAN}{'='*80}")
+        logger.info(f"{Fore.CYAN}📝 Processing Query: {query}")
+        logger.info(f"{Fore.CYAN}{'='*80}\n")
+        
+        trajectory_logger = TrajectoryLogger(query=query)
 
-        result = self.orchestrator.process_query(query)
+        result = self.orchestrator.process_query(query, trajectory_logger=trajectory_logger)
+        
+        # Save final trajectory
+        final_answer = result.get("final_response", {}).get("answer") or result.get("final_response", {}).get("unified_response", "No answer generated")
+        trajectory_logger.finish(final_answer=final_answer)
 
         # Display summary
         meta = result.get("metadata", {})
-        print(f"{Fore.GREEN}   Agents used: {meta.get('agents_used', [])}")
-        print(f"   Consensus: {meta.get('consensus_applied', False)}")
-        print(f"   Orchestrator: {meta.get('orchestrator', 'primary')}{Style.RESET_ALL}")
+        logger.info(f"{Fore.GREEN}   Agents used: {meta.get('agents_used', [])}")
+        logger.info(f"   Consensus: {meta.get('consensus_applied', False)}")
+        logger.info(f"   Orchestrator: {meta.get('orchestrator', 'primary')}{Style.RESET_ALL}")
 
         return result
 

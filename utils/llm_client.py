@@ -6,6 +6,7 @@ import os
 import json
 from typing import Dict, List, Optional, Any
 from groq import Groq
+from openai import OpenAI
 import dspy
 from config.config import Config
 
@@ -15,15 +16,26 @@ class LLMClient:
     Can be easily swapped for SLM later
     """
     
-    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
-        self.api_key = api_key or Config.GROQ_API_KEY
-        self.model = model or Config.GROQ_MODEL
-        self.client = Groq(api_key=self.api_key)
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, provider: Optional[str] = None):
+        self.provider = provider or Config.LLM_PROVIDER
+        
+        if self.provider == "openai":
+            self.api_key = api_key or Config.OPENAI_API_KEY
+            self.model = model or Config.OPENAI_MODEL
+            self.client = OpenAI(api_key=self.api_key)
+        else:
+            self.api_key = api_key or Config.GROQ_API_KEY
+            self.model = model or Config.GROQ_MODEL
+            self.client = Groq(api_key=self.api_key)
+            
         self.init_dspy()
         
     def init_dspy(self):
-        """Initialize DSPy globally with the Groq model"""
-        lm = dspy.LM(f'groq/{self.model}', api_key=self.api_key)
+        """Initialize DSPy globally with the selected model"""
+        if self.provider == "openai":
+            lm = dspy.LM(f'openai/{self.model}', api_key=self.api_key)
+        else:
+            lm = dspy.LM(f'groq/{self.model}', api_key=self.api_key)
         dspy.configure(lm=lm)
         return lm
         
@@ -241,3 +253,15 @@ def get_llm_client() -> LLMClient:
     if _llm_client is None:
         _llm_client = LLMClient()
     return _llm_client
+
+def get_crewai_llm():
+    from crewai import LLM
+    if Config.LLM_PROVIDER == "openai":
+        return LLM(model=f"openai/{Config.OPENAI_MODEL}", api_key=Config.OPENAI_API_KEY)
+    return LLM(model=f"groq/{Config.GROQ_MODEL}", api_key=Config.GROQ_API_KEY)
+
+def get_crewai_tool_llm():
+    from crewai import LLM
+    if Config.LLM_PROVIDER == "openai":
+        return LLM(model=f"openai/{Config.OPENAI_MODEL}", api_key=Config.OPENAI_API_KEY)
+    return LLM(model=f"groq/{Config.GROQ_MODEL}", api_key=Config.GROQ_API_KEY)

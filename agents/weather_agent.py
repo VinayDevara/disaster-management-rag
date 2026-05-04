@@ -14,6 +14,9 @@ import json
 import dspy
 from crewai import Agent, Task, Crew, LLM
 from crewai.tools import BaseTool
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def create_weather_tools(
@@ -251,9 +254,51 @@ class WeatherAgent:
         """
         Process weather-related query using CrewAI agent + DSPy response synthesis.
         """
-        print(f"🌤️  Weather Agent processing: {query}")
+        logger.info(f"🌤️  Weather Agent processing: {query}")
 
-        context_str = json.dumps(context, default=str) if context else "No additional context."
+        trajectory_logger = context.get('trajectory_logger') if context else None
+        context_str = json.dumps({k:v for k,v in (context or {}).items() if k != 'trajectory_logger'}, default=str) if context else "No additional context."
+        
+        def step_callback(step_output):
+            if not trajectory_logger or not step_output: return
+            if isinstance(step_output, list) and len(step_output) == 0: return
+            
+            try:
+                thought = ""
+                action = ""
+                action_input = {}
+                observation = ""
+                
+                if isinstance(step_output, list):
+                    step_output = step_output[-1]
+                
+                if isinstance(step_output, tuple) and len(step_output) >= 2:
+                    action_obj, obs = step_output[0], step_output[1]
+                    thought = getattr(action_obj, 'log', getattr(action_obj, 'thought', ''))
+                    action = getattr(action_obj, 'tool', str(action_obj))
+                    action_input = getattr(action_obj, 'tool_input', {})
+                    observation = str(obs)
+                elif hasattr(step_output, 'return_values') or step_output.__class__.__name__ == 'AgentFinish':
+                    # It's an AgentFinish object
+                    thought = getattr(step_output, 'log', getattr(step_output, 'thought', ''))
+                    action = "AgentFinish"
+                    observation = getattr(step_output, 'return_values', str(step_output))
+                else:
+                    thought = getattr(step_output, 'thought', getattr(step_output, 'log', getattr(step_output, 'text', '')))
+                    action = getattr(step_output, 'tool', getattr(step_output, 'action', ''))
+                    action_input = getattr(step_output, 'tool_input', getattr(step_output, 'action_input', {}))
+                    observation = getattr(step_output, 'result', getattr(step_output, 'observation', str(step_output)))
+                    
+                trajectory_logger.log_step(
+                    thought=str(thought),
+                    action=str(action),
+                    action_input=action_input if isinstance(action_input, dict) else {"input": str(action_input)},
+                    observation=str(observation)[:1000]
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log step: {e}")
+                
+        self.crew_agent.step_callback = step_callback
 
         task = Task(
             description=(
@@ -278,8 +323,8 @@ class WeatherAgent:
             crew_result = crew.kickoff()
             raw_output = str(crew_result)
         except Exception as e:
-            print(f"⚠️ CrewAI weather execution failed: {e}")
-            print("🔄 Falling back to direct tool queries...")
+            logger.warning(f"⚠️ CrewAI weather execution failed: {e}")
+            logger.info("🔄 Falling back to direct tool queries...")
             raw_output = self._fallback_direct_query(query)
 
         # Analyze severity from raw output
@@ -294,7 +339,7 @@ class WeatherAgent:
             )
             answer = dspy_result.response
         except Exception as e:
-            print(f"⚠️ DSPy weather response generation failed: {e}")
+            logger.warning(f"⚠️ DSPy weather response generation failed: {e}")
             answer = raw_output
 
         return {
@@ -413,4 +458,4 @@ if __name__ == "__main__":
     agent = WeatherAgent(db, vector_db)
 
     result = agent.process("What's the weather in London?")
-    print(json.dumps(result, indent=2, default=str))
+    logger.info(json.dumps(result, indent=2, default=str))

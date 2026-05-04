@@ -139,6 +139,17 @@ ERROR HANDLING
     # ADS-B Data
     ADSB_DATA_PATH = os.getenv("ADSB_DATA_PATH", str(DATA_DIR / "adsb_sample.xlsx"))
     
+    # LLM Provider Configuration
+    LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq") # 'groq' or 'openai'
+
+    # OpenAI Config
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+    OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+
+    # Groq Config
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+    GROQ_MODEL = os.getenv("GROQ_MODEL", "llama3-8b-8192")
+    
     # Embedding Model
     EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
     
