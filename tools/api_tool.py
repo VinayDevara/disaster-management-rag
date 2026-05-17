@@ -332,6 +332,154 @@ class DisasterAPITool:
             return {"error": f"Event details error: {str(e)}"}
 
 
+class GNewsAPITool:
+    """
+    GNews API tool for real-time disaster news intelligence.
+
+    Searches global news for disaster-related articles and filters them
+    by relevance, region, and quality.  Provides the disaster agent with
+    current news context that EONET/GDACS may not cover (e.g. local
+    rescue operations, government announcements, situational updates).
+    """
+
+    GNEWS_SEARCH_URL = "https://gnews.io/api/v4/search"
+
+    # ── Keyword lists (mirrored from the frontend) ──────────────────────
+    DISASTER_KEYWORDS = [
+        "earthquake", "flood", "flooding", "cyclone", "hurricane",
+        "typhoon", "storm", "wildfire", "forest fire", "landslide",
+        "tsunami", "evacuation", "rescue", "rainfall", "weather warning",
+        "heatwave", "disaster", "severe weather", "monsoon", "cloudburst",
+    ]
+
+    INDIA_KEYWORDS = [
+        "india", "indian", "delhi", "mumbai", "kolkata", "chennai",
+        "hyderabad", "assam", "odisha", "maharashtra", "kerala",
+        "tamil nadu", "gujarat", "rajasthan", "uttarakhand", "himachal",
+        "andhra", "telangana", "karnataka", "bengaluru", "bangalore",
+    ]
+
+    KARNATAKA_KEYWORDS = [
+        "karnataka", "bengaluru", "bangalore", "mysuru", "mangalore",
+        "udupi", "hubli", "belagavi", "shivamogga", "kodagu", "coorg",
+        "dakshina kannada", "uttara kannada", "hassan", "chikkamagaluru",
+        "mandya", "tumakuru", "ballari", "raichur", "kalaburagi", "bidar",
+    ]
+
+    EXCLUDE_KEYWORDS = [
+        "wife", "husband", "celebrity", "actor", "actress", "tv", "show",
+        "movie", "football", "cricket score", "tennis", "dating", "fashion",
+        "music", "album", "box office", "iphone", "android", "laptop",
+        "stocks", "share market",
+    ]
+
+    def __init__(self, api_key: str | None = None):
+        self.api_key = api_key or Config.GNEWS_API_KEY
+
+    # ── Public methods ──────────────────────────────────────────────────
+
+    def search_disaster_news(
+        self,
+        query: str = "",
+        region: str = "global",
+        max_results: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """Search GNews for disaster-related articles.
+
+        Args:
+            query: Free-text search terms (appended to the default
+                   disaster keywords).  Pass an empty string to use
+                   the built-in disaster keyword OR-query.
+            region: 'global', 'india', or 'karnataka' — post-filters
+                    results by geographic keywords.
+            max_results: Maximum articles to return (capped at 20).
+
+        Returns:
+            List of article dicts with title, source, url, description,
+            published_at, and image fields.
+        """
+        if not self.api_key:
+            return [{"error": "GNEWS_API_KEY not configured in .env"}]
+
+        max_results = max(1, min(int(max_results), 20))
+
+        # Build the search query — combine user terms with disaster OR-set
+        base_terms = (
+            "earthquake OR flood OR cyclone OR storm OR wildfire "
+            "OR landslide OR tsunami OR rainfall OR weather warning "
+            "OR heatwave OR disaster"
+        )
+        if query.strip():
+            search_q = f"{query.strip()} AND ({base_terms})"
+        else:
+            search_q = base_terms
+
+        try:
+            params = {
+                "q": search_q,
+                "lang": "en",
+                "max": 50,  # fetch more, filter locally
+                "apikey": self.api_key,
+            }
+            response = requests.get(
+                self.GNEWS_SEARCH_URL, params=params, timeout=15,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except Exception as e:
+            print(f"❌ GNews API error: {e}")
+            return [{"error": f"GNews API error: {str(e)}"}]
+
+        # ── Filter ──────────────────────────────────────────────────────
+        articles = data.get("articles", [])
+        filtered: List[Dict[str, Any]] = []
+
+        for article in articles:
+            text = (
+                f"{article.get('title', '')} "
+                f"{article.get('description', '')}"
+            ).lower()
+
+            # Must contain a disaster keyword
+            if not any(kw in text for kw in self.DISASTER_KEYWORDS):
+                continue
+            # Must not contain excluded keywords
+            if any(kw in text for kw in self.EXCLUDE_KEYWORDS):
+                continue
+
+            # Region filter
+            region_lower = region.lower().strip()
+            if region_lower == "karnataka":
+                if not any(kw in text for kw in self.KARNATAKA_KEYWORDS):
+                    continue
+            elif region_lower == "india":
+                if not any(kw in text for kw in self.INDIA_KEYWORDS):
+                    continue
+            # else: global — no geo filter
+
+            filtered.append({
+                "title": article.get("title", "Untitled"),
+                "source": article.get("source", {}).get("name", "Unknown"),
+                "url": article.get("url", ""),
+                "description": article.get("description", ""),
+                "published_at": article.get("publishedAt", ""),
+                "image": article.get("image", ""),
+            })
+
+            if len(filtered) >= max_results:
+                break
+
+        return filtered
+
+    def get_latest_disaster_news(
+        self, region: str = "india", max_results: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """Convenience wrapper — fetch latest disaster news for a region."""
+        return self.search_disaster_news(
+            query="", region=region, max_results=max_results,
+        )
+
+
 if __name__ == "__main__":
     # Test APIs
     print("Testing Weather API...")
@@ -345,3 +493,10 @@ if __name__ == "__main__":
     print(f"Found {len(events)} active disaster events")
     if events:
         print(json.dumps(events[0], indent=2))
+
+    print("\nTesting GNews API...")
+    gnews_tool = GNewsAPITool()
+    news = gnews_tool.get_latest_disaster_news(region="india", max_results=3)
+    print(f"Found {len(news)} disaster news articles")
+    for article in news:
+        print(f"  - {article.get('title', 'N/A')}")

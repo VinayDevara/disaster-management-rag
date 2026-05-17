@@ -3,6 +3,7 @@ Orchestrator Agent - Central Hub Pattern
 Routes queries, manages agent execution with retry logic,
 evaluates results for re-invocation, and falls back to FlightAgent if needed.
 """
+import re
 from typing import Dict, List, Any, Optional
 from utils.llm_client import get_llm_client
 from agents.dspy_signatures import (
@@ -14,6 +15,54 @@ from config.config import Config
 import json
 import dspy
 from datetime import datetime
+
+# ── Keyword lists for deterministic pre-classification ──────────────────────
+# These catch obvious domain queries before the (potentially weak) LLM runs.
+
+_WEATHER_KEYWORDS = [
+    # conditions
+    "temperature", "temp", "weather", "forecast", "rain", "rainfall",
+    "humidity", "wind", "winds", "wind speed", "precipitation", "cloud",
+    "cloudy", "sunny", "storm", "thunderstorm", "hail", "fog", "mist",
+    "visibility", "dew point", "heat wave", "heatwave", "cold wave",
+    "snow", "snowfall", "blizzard", "frost", "monsoon", "climate",
+    # severe / maritime
+    "cyclone", "hurricane", "typhoon", "tornado", "waterspout",
+    "severe weather", "weather warning", "weather alert",
+    "maritime weather", "sea state", "wave height", "tide",
+    # measurement
+    "celsius", "fahrenheit", "barometer", "pressure", "atmospheric",
+    # specific data sources
+    "open-meteo", "openmeteo", "gpm", "lhasa", "landslide nowcast",
+    "landslide risk", "landslide",
+]
+
+_DISASTER_KEYWORDS = [
+    "disaster", "earthquake", "quake", "flood", "flooding", "tsunami",
+    "wildfire", "fire", "eruption", "volcano", "volcanic",
+    "landslide", "avalanche", "drought", "famine",
+    "evacuation", "evacuate", "emergency", "relief", "rescue",
+    "casualty", "casualties", "damage", "destruction",
+    "gdacs", "sachet", "alert level", "red alert", "orange alert",
+    "disaster alert", "natural disaster", "humanitarian",
+    "ibtracs", "tropical storm", "cyclone track",
+    "shelter", "logistics", "aid", "ndrf", "sdrf",
+]
+
+_FLIGHT_KEYWORDS = [
+    "flight", "flights", "aircraft", "airplane", "plane", "aviation",
+    "ads-b", "adsb", "callsign", "squawk", "transponder",
+    "takeoff", "take off", "landing", "runway", "airport",
+    "airspace", "altitude", "heading", "trajectory",
+    "hex code", "icao", "iata",
+    "emergency squawk", "7700", "7600", "7500",
+    "divert", "diversion", "mayday",
+]
+
+_GENERAL_PATTERNS = re.compile(
+    r"^\s*(hi|hello|hey|howdy|good\s*(morning|afternoon|evening|night)|thanks|thank\s*you|bye|goodbye|help|what\s+can\s+you\s+do|who\s+are\s+you)\s*[?!.]*\s*$",
+    re.IGNORECASE,
+)
 
 
 class OrchestratorAgent:
@@ -136,8 +185,84 @@ class OrchestratorAgent:
 
     # ── Classification & decomposition ──────────────────────────────────────
 
+    # ── Keyword pre-classification ────────────────────────────────────────────
+
+    @staticmethod
+    def _keyword_classify(query: str) -> Optional[Dict[str, Any]]:
+        """Fast, deterministic classification based on keyword matching.
+
+        Returns a full classification dict when the query clearly belongs to a
+        single domain.  Returns ``None`` when ambiguous — caller should then
+        fall through to the LLM-based classifier.
+        """
+        q = query.lower()
+
+        # 1. Pure greetings / small talk — no domain keywords at all
+        if _GENERAL_PATTERNS.match(query):
+            return {
+                "query_type": "general",
+                "primary_agent": "none",
+                "secondary_agents": [],
+                "requires_cross_intelligence": False,
+                "reasoning": "Keyword pre-classifier: greeting / small-talk",
+                "extracted_entities": {},
+            }
+
+        # 2. Count keyword hits per domain
+        scores: Dict[str, int] = {"weather": 0, "disaster": 0, "flight": 0}
+        for kw in _WEATHER_KEYWORDS:
+            if kw in q:
+                scores["weather"] += 1
+        for kw in _DISASTER_KEYWORDS:
+            if kw in q:
+                scores["disaster"] += 1
+        for kw in _FLIGHT_KEYWORDS:
+            if kw in q:
+                scores["flight"] += 1
+
+        total_hits = sum(scores.values())
+        if total_hits == 0:
+            return None  # no domain signal — let the LLM decide
+
+        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        primary_domain, primary_score = ranked[0]
+        secondary_domain, secondary_score = ranked[1]
+
+        # Determine complexity
+        if secondary_score > 0 and primary_score > 0:
+            # Multi-domain query
+            secondaries = [d for d, s in ranked[1:] if s > 0]
+            return {
+                "query_type": "complex",
+                "primary_agent": primary_domain,
+                "secondary_agents": secondaries,
+                "requires_cross_intelligence": True,
+                "reasoning": f"Keyword pre-classifier: {primary_domain}({primary_score}) + {secondaries}",
+                "extracted_entities": {},
+            }
+
+        # Single-domain query
+        return {
+            "query_type": "simple",
+            "primary_agent": primary_domain,
+            "secondary_agents": [],
+            "requires_cross_intelligence": False,
+            "reasoning": f"Keyword pre-classifier: {primary_domain}({primary_score})",
+            "extracted_entities": {},
+        }
+
+    # ── Main classification entry point ─────────────────────────────────────
+
     def _classify_query(self, query: str) -> Dict[str, Any]:
-        """Classify query using DSPy structured prediction."""
+        """Classify query using keyword pre-classification + DSPy fallback."""
+
+        # ── Step 1: Try fast keyword classifier first ───────────────────────
+        keyword_result = self._keyword_classify(query)
+        if keyword_result is not None:
+            print(f"   🔑 Keyword pre-classifier matched → {keyword_result['primary_agent']}")
+            return keyword_result
+
+        # ── Step 2: Fall back to DSPy structured prediction ─────────────────
         try:
             result = self.classify_predictor(query=query)
             classification = (
@@ -157,15 +282,45 @@ class OrchestratorAgent:
                 "extracted_entities": {},
             }
 
-        # Validate — normalize to lowercase first (DSPy may return uppercase)
-        valid_agents = ["flight", "weather", "disaster", "none"]
+        # ── Step 3: Validate & normalize ────────────────────────────────────
         primary = str(classification.get("primary_agent", "flight")).lower().strip()
         query_type = str(classification.get("query_type", "simple")).lower().strip()
 
-        # If classified as general, force primary_agent to none
-        if query_type == "general":
-            classification["primary_agent"] = "none"
-            classification["query_type"] = "general"
+        # ── Step 4: Post-classification guard ───────────────────────────────
+        # If the LLM says "general" but the query obviously contains domain
+        # keywords, override the classification so the agent is invoked.
+        if query_type == "general" or primary == "none":
+            guard_result = self._keyword_classify(query)
+            # _keyword_classify already returned None for this query above,
+            # so also do a lenient single-keyword sweep as a safety net.
+            q = query.lower()
+            for kw in _WEATHER_KEYWORDS:
+                if kw in q:
+                    print(f"   🛡️ Post-guard override: general → weather (matched '{kw}')")
+                    classification["query_type"] = "simple"
+                    classification["primary_agent"] = "weather"
+                    classification["reasoning"] = f"Post-guard override: matched weather keyword '{kw}'"
+                    break
+            else:
+                for kw in _DISASTER_KEYWORDS:
+                    if kw in q:
+                        print(f"   🛡️ Post-guard override: general → disaster (matched '{kw}')")
+                        classification["query_type"] = "simple"
+                        classification["primary_agent"] = "disaster"
+                        classification["reasoning"] = f"Post-guard override: matched disaster keyword '{kw}'"
+                        break
+                else:
+                    for kw in _FLIGHT_KEYWORDS:
+                        if kw in q:
+                            print(f"   🛡️ Post-guard override: general → flight (matched '{kw}')")
+                            classification["query_type"] = "simple"
+                            classification["primary_agent"] = "flight"
+                            classification["reasoning"] = f"Post-guard override: matched flight keyword '{kw}'"
+                            break
+                    else:
+                        # Truly general — no domain keywords found at all
+                        classification["primary_agent"] = "none"
+                        classification["query_type"] = "general"
         else:
             # For non-general queries, only flight/weather/disaster are valid
             if primary not in ["flight", "weather", "disaster"]:

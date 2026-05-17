@@ -506,7 +506,7 @@ def print_diagnosis(results, qmap):
     if no_tools:
         print(f"    {warn('●')} {len(no_tools)} queries in Cat A-D completed without any tool calls.")
         print(f"      This often happens when rate limits force fallback to cached/empty answers.")
-        print(f"      With a paid Groq tier (higher TPM), tool selection should improve.")
+        print(f"      With more local trace data and better prompting, tool selection should improve.")
 
     if templates:
         print(f"    {warn('●')} Multiple queries returned identical 3787-char responses —")
@@ -514,9 +514,8 @@ def print_diagnosis(results, qmap):
 
     fb_rate = sum(1 for r in results if r["fallback_used"]) / len(results)
     if fb_rate > 0.4:
-        print(f"    {warn('●')} {fb_rate*100:.0f}% fallback rate is high. Primary cause: Groq free-tier")
-        print(f"      rate limits (12K TPM / 100K TPD). Upgrading the API tier or adding a")
-        print(f"      secondary LLM provider would significantly reduce fallbacks.")
+        print(f"    {warn('●')} {fb_rate*100:.0f}% fallback rate is high. Primary cause: local model or tool-execution")
+        print(f"      failures. Improving prompts, tool coverage, and local model quality should reduce fallbacks.")
 
     print(f"    {ok('●')} 100% response rate and 0 crashes — the error handling and fallback")
     print(f"      architecture is solid and production-ready.")

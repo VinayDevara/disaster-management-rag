@@ -7,7 +7,7 @@ from utils.llm_client import get_llm_client, get_crewai_llm, get_crewai_tool_llm
 from utils.database import DatabaseManager
 from utils.vector_db import VectorDBManager
 from tools.sql_tool import DisasterSQLTool, AlertsSQLTool, ExternalEventsSQLTool, CycloneSQLTool
-from tools.api_tool import DisasterAPITool
+from tools.api_tool import DisasterAPITool, GNewsAPITool
 from agents.dspy_signatures import GenerateDisasterResponse
 from config.config import Config
 import json
@@ -18,6 +18,7 @@ from crewai.tools import BaseTool
 
 def create_disaster_tools(
     sql_tool: DisasterSQLTool, api_tool: DisasterAPITool, vector_db: VectorDBManager,
+    gnews_tool: GNewsAPITool = None,
     alerts_sql: AlertsSQLTool = None,
     events_sql: ExternalEventsSQLTool = None,
     cyclone_sql: CycloneSQLTool = None,
@@ -191,11 +192,53 @@ def create_disaster_tools(
             except Exception as e:
                 return json.dumps({"error": str(e)})
 
+    # ── GNews disaster news tools ─────────────────────────────────────
+
+    class _SearchDisasterNews(BaseTool):
+        name: str = "search_disaster_news"
+        description: str = (
+            "Search global news for disaster-related articles. "
+            "Provide a query like 'cyclone india' or 'earthquake karnataka'. "
+            "Optionally set region to 'india', 'karnataka', or 'global'."
+        )
+
+        def _run(self, query: str = "", region: str = "india",
+                 max_results: str = "10") -> str:
+            try:
+                results = gnews_tool.search_disaster_news(
+                    query=str(query), region=str(region),
+                    max_results=int(max_results),
+                )
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _GetLatestDisasterNews(BaseTool):
+        name: str = "get_latest_disaster_news"
+        description: str = (
+            "Get the latest disaster news headlines. "
+            "Use region='india' for India-specific news, "
+            "'karnataka' for Karnataka-specific, or 'global' for worldwide."
+        )
+
+        def _run(self, region: str = "india",
+                 max_results: str = "10") -> str:
+            try:
+                results = gnews_tool.get_latest_disaster_news(
+                    region=str(region), max_results=int(max_results),
+                )
+                return _truncate(json.dumps(results[:5], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
     tools = [
         _GetActiveEvents(), _GetEventsByCategory(), _GetEventsInArea(),
         _GetEventDetails(), _GetDisasterEventsByType(), _GetRecentDisasters(),
         _VectorSearchDisasters(),
     ]
+
+    # Always include GNews tools (they gracefully handle missing API key)
+    tools.extend([_SearchDisasterNews(), _GetLatestDisasterNews()])
 
     if alerts_sql is not None:
         tools.extend([_GetOfficialAlerts(), _GetActiveAlerts()])
@@ -225,10 +268,12 @@ class DisasterAgent:
         self.alerts_sql = AlertsSQLTool(db_manager)
         self.events_sql = ExternalEventsSQLTool(db_manager)
         self.cyclone_sql = CycloneSQLTool(db_manager)
+        self.gnews_tool = GNewsAPITool()
 
         # CrewAI tools and agent
         self.tools = create_disaster_tools(
             self.sql_tool, self.api_tool, self.vector_db,
+            gnews_tool=self.gnews_tool,
             alerts_sql=self.alerts_sql,
             events_sql=self.events_sql,
             cyclone_sql=self.cyclone_sql,
@@ -280,15 +325,27 @@ class DisasterAgent:
 
         # Refresh the local LLM before each call so tool instructions stay current.
         self.crew_agent.llm = get_crewai_llm()
-        crew = Crew(agents=[self.crew_agent], tasks=[task], verbose=True, respect_context_window=True, function_calling_llm=get_crewai_tool_llm())
+        crew = Crew(agents=[self.crew_agent], tasks=[task], verbose=True, respect_context_window=True, function_calling_llm=f"ollama/{Config.OLLAMA_TOOL_MODEL}")
 
         try:
             crew_result = crew.kickoff()
             raw_output = str(crew_result)
+            
+            # Hallucination check: small models (3B) often simulate tool calls
+            hallucination_markers = ["simulate", "hypothetical", "demonstration", "dummy", "mock"]
+            if any(marker in raw_output.lower() for marker in hallucination_markers):
+                print("⚠️ Hallucination detected in CrewAI output. Forcing fallback...")
+                raw_output = self._fallback_direct_query(query)
+                
         except Exception as e:
             print(f"⚠️ CrewAI disaster execution failed: {e}")
             print("🔄 Falling back to direct tool queries...")
             raw_output = self._fallback_direct_query(query)
+
+        # To completely prevent hallucinated facts from bleeding through,
+        # we also append the actual real-time tool data for DSPy to use as grounding.
+        real_time_data = self._fallback_direct_query(query)
+        grounded_disaster_data = f"Agent Output:\n{raw_output}\n\nReal-Time Database/API Evidence:\n{real_time_data}"
 
         # Analyze impact from raw output
         impact_analysis = self._analyze_impact_from_output(raw_output)
@@ -297,7 +354,7 @@ class DisasterAgent:
         try:
             dspy_result = self.response_predictor(
                 query=query,
-                disaster_data=raw_output,
+                disaster_data=grounded_disaster_data,
                 impact_analysis=json.dumps(impact_analysis),
             )
             answer = dspy_result.response
@@ -402,6 +459,14 @@ class DisasterAgent:
                     results.append("Historical cyclones:\n" + json.dumps(cyc[:5], default=str))
             except Exception:
                 pass
+
+        # GNews — real-time disaster news
+        try:
+            news = self.gnews_tool.search_disaster_news(query=query, region="india", max_results=5)
+            if news and not any("error" in str(n) for n in news):
+                results.append("Latest disaster news:\n" + json.dumps(news[:5], default=str))
+        except Exception:
+            pass
 
         return "\n\n".join(results) if results else "No disaster data available for this query."
 

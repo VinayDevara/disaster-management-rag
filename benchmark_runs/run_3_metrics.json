@@ -1,0 +1,15 @@
+{
+  "total_queries": 30,
+  "total_execution_time": 557.6,
+  "average_latency": 18.6,
+  "routing_accuracy_pct": 96.7,
+  "tool_selection_rate_pct": 40.0,
+  "edge_fallback_resilience_pct": 100.0,
+  "fallback_triggered_pct": 70.0,
+  "consensus_applied_pct": 46.7,
+  "unique_tools_invoked": 25,
+  "total_tool_invocations": 52,
+  "semantic_relevance_score": 0.744,
+  "response_rate_pct": 100.0,
+  "crash_free_pct": 100.0
+}

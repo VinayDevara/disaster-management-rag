@@ -295,7 +295,9 @@ export async function GET(request: Request) {
 
     const url = `https://gnews.io/api/v4/search?q=${query}&lang=en&max=50&apikey=${apiKey}`;
 
-    const res = await fetch(url, { cache: 'no-store' });
+    // Cache the GNews response for 30 minutes (1800 seconds) to avoid rate limits.
+    // The query is global; region filtering happens locally below.
+    const res = await fetch(url, { next: { revalidate: 1800 } });
     const data = await res.json();
 
     if (!res.ok) {
@@ -326,6 +328,17 @@ export async function GET(request: Request) {
 
       if (region === 'india') {
         return INDIA_KEYWORDS.some((keyword) => text.includes(keyword));
+      }
+
+      if (region !== 'global') {
+        // Dynamic region based on geolocation state/city (e.g. "surathkal,karnataka")
+        const localKeywords = region.toLowerCase().split(',');
+        
+        // If it's a dynamic location, check if it contains any of the location keywords (city or state)
+        return localKeywords.some(keyword => {
+          const kw = keyword.trim();
+          return kw.length > 0 && (text.includes(kw) || text.includes(kw.split(' ')[0]));
+        });
       }
 
       return true; // global

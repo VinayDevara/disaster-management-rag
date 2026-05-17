@@ -19,26 +19,39 @@ class ClassificationOutput(BaseModel):
 class ClassifyQuery(dspy.Signature):
     """Classify user queries for a disaster management system.
 
-    0. GENERAL - Greetings, small talk, vague questions, or anything NOT about flights/weather/disasters.
-       Use this for: 'hi', 'hello', 'how are you', 'what can you do', 'thanks', 'help', etc.
+    IMPORTANT — only use 'general' for greetings and small-talk.
+    If the query mentions ANY weather, disaster, or flight topic, it is NOT general.
+
+    0. GENERAL - ONLY for greetings, small talk, thanks, or questions about the system itself.
+       Examples: 'hi', 'hello', 'how are you', 'what can you do', 'thanks', 'help'.
        Set primary_agent = 'none' for general queries.
 
-    1. FLIGHT AGENT - Flight tracking and ADS-B data, aircraft surveillance.
-    2. WEATHER AGENT - Current weather, forecasts, severe weather, maritime conditions.
-    3. DISASTER AGENT - Natural disasters, urban evacuation plans, emergency logistics.
+    1. FLIGHT AGENT - Flight tracking, ADS-B data, aircraft surveillance, airports, airspace.
+    2. WEATHER AGENT - Temperature, rain, forecast, humidity, wind, storms, cyclones, maritime weather, landslide risk, rainfall data.
+    3. DISASTER AGENT - Earthquakes, floods, tsunamis, wildfires, evacuations, emergency logistics, disaster alerts, GDACS events.
 
-    Query Classification Guidelines:
-    - GENERAL queries do NOT need any agent — answer conversationally
-    - SIMPLE queries need ONE agent
-    - COMPLEX queries need MULTIPLE agents
+    Classification Rules:
+    - GENERAL = greetings / small-talk ONLY. Never classify a weather/disaster/flight query as general.
+    - SIMPLE = the query needs exactly ONE agent
+    - COMPLEX = the query needs MULTIPLE agents (cross-domain)
 
     Examples:
-    - "hi" -> general (primary_agent='none')
-    - "hello" -> general (primary_agent='none')
-    - "what can you do?" -> general (primary_agent='none')
-    - "What flights are near Los Angeles?" -> Flight Agent only (simple)
-    - "Show active wildfires" -> Disaster Agent only (simple)
-    - "Are flights affected by California wildfires?" -> Flight + Disaster (complex)
+    - "hi" -> general, primary_agent='none'
+    - "hello" -> general, primary_agent='none'
+    - "what can you do?" -> general, primary_agent='none'
+    - "temperature in mangalore now" -> simple, primary_agent='weather'
+    - "what is the weather in bangalore" -> simple, primary_agent='weather'
+    - "will it rain tomorrow" -> simple, primary_agent='weather'
+    - "current rainfall data" -> simple, primary_agent='weather'
+    - "cyclone forecast" -> simple, primary_agent='weather'
+    - "landslide risk in karnataka" -> simple, primary_agent='weather'
+    - "show active earthquakes" -> simple, primary_agent='disaster'
+    - "any flood alerts near mumbai" -> simple, primary_agent='disaster'
+    - "evacuation plan for coastal area" -> simple, primary_agent='disaster'
+    - "What flights are near Mangalore?" -> simple, primary_agent='flight'
+    - "any emergency squawks" -> simple, primary_agent='flight'
+    - "Are flights affected by California wildfires?" -> complex, primary_agent='flight', secondary_agents=['disaster']
+    - "How does the cyclone affect flight routes?" -> complex, primary_agent='flight', secondary_agents=['weather']
     """
     query: str = dspy.InputField(desc="The user query to classify")
     output: ClassificationOutput = dspy.OutputField()

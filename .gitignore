@@ -26,4 +26,14 @@ data/chromadb/
 # --- OS Generated Files ---
 .DS_Store
 Thumbs.db
-.env.exampledata/raw_payloads/
+data/raw_payloads/
+data/training/
+
+# --- Node / Frontend ---
+node_modules/
+.next/
+disaster-app-frontend/node_modules/
+disaster-app-frontend/.next/
+
+# --- Logs ---
+*.log
