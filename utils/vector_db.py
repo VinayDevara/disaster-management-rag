@@ -2,6 +2,11 @@
 Vector Database Manager using ChromaDB
 Handles embedding storage and similarity search for RAG
 """
+import os
+
+os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
+os.environ.setdefault("USE_TF", "0")
+
 import chromadb
 from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer

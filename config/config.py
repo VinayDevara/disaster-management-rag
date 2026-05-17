@@ -128,6 +128,7 @@ ERROR HANDLING
     
     # API Keys
     OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY", "")
+    GNEWS_API_KEY = os.getenv("GNEWS_API_KEY", "")
     NASA_API_KEY = os.getenv("NASA_API_KEY", "DEMO_KEY")
     
     # Database Paths

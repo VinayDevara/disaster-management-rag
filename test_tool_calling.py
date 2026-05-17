@@ -1,14 +1,5 @@
-"""Quick test: which Groq model handles tool calling correctly?"""
-import os
-import json
-from dotenv import load_dotenv
-load_dotenv()
-
-import requests
-
-API_KEY = os.getenv("GROQ_API_KEY")
-URL = "https://api.groq.com/openai/v1/chat/completions"
-HEADERS = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
+"""Quick local test: verify Qwen tool calling through Ollama."""
+from utils.llm_client import get_llm_client
 
 TOOLS = [
     {"type": "function", "function": {"name": "get_active_events", "description": "Get currently active disaster events worldwide.", "parameters": {"type": "object", "properties": {"limit": {"type": "integer", "description": "Max events to return"}}, "required": []}}},
@@ -26,45 +17,23 @@ TOOLS = [
     {"type": "function", "function": {"name": "get_intense_cyclones", "description": "Get historical cyclones above a wind speed threshold in knots.", "parameters": {"type": "object", "properties": {"min_wind_kt": {"type": "number"}, "limit": {"type": "integer"}}, "required": []}}},
 ]
 
-MODELS = [
-    "llama-3.3-70b-versatile",
-    "meta-llama/llama-4-scout-17b-16e-instruct",
-    "qwen/qwen3-32b",
-]
-
 QUERY = "give one recent landslide in india and its current condition"
 
-for model in MODELS:
-    print(f"\n{'='*60}")
-    print(f"Testing: {model} ({len(TOOLS)} tools)")
-    print("=" * 60)
-    payload = {
-        "model": model,
-        "messages": [{"role": "user", "content": QUERY}],
-        "tools": TOOLS,
-        "tool_choice": "auto",
-        "max_tokens": 1024,
-        "temperature": 0.3,
-    }
-    try:
-        r = requests.post(URL, headers=HEADERS, json=payload, timeout=30)
-        if r.status_code == 200:
-            data = r.json()
-            choice = data["choices"][0]
-            msg = choice["message"]
-            if msg.get("tool_calls"):
-                tc = msg["tool_calls"][0]
-                print(f"  ✅ Tool call SUCCESS: {tc['function']['name']}({tc['function']['arguments']})")
-            elif msg.get("content"):
-                content_preview = msg["content"][:200]
-                print(f"  ⚠️ No tool call, got text: {content_preview}")
-            else:
-                print(f"  ❓ Unexpected response: {json.dumps(msg, indent=2)[:300]}")
-        else:
-            err = r.json().get("error", {})
-            failed = err.get("failed_generation", "")
-            print(f"  ❌ Error {r.status_code}: {err.get('message', r.text)[:200]}")
-            if failed:
-                print(f"  Failed generation: {failed[:200]}")
-    except Exception as e:
-        print(f"  ❌ Exception: {e}")
+client = get_llm_client()
+print(f"Using provider: {client._active_provider}")
+print(f"Model: {client.model}")
+
+result = client.generate_with_tools(
+    prompt=QUERY,
+    system_prompt="Use the available tools to answer with grounded evidence.",
+    tools=TOOLS,
+)
+
+if result.get("tool_calls"):
+    tc = result["tool_calls"][0]
+    print(f"  ✅ Tool call SUCCESS: {tc['name']}({tc['arguments']})")
+elif result.get("content"):
+    content_preview = result["content"][:200]
+    print(f"  ⚠️ No tool call, got text: {content_preview}")
+else:
+    print(f"  ❓ Unexpected response: {result}")

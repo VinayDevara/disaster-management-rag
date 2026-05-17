@@ -188,7 +188,7 @@ class FlightAgent:
 
         # Refresh the local LLM before each call so tool instructions stay current.
         self.crew_agent.llm = get_crewai_llm()
-        crew = Crew(agents=[self.crew_agent], tasks=[task], verbose=True, respect_context_window=True, function_calling_llm=get_crewai_tool_llm())
+        crew = Crew(agents=[self.crew_agent], tasks=[task], verbose=True, respect_context_window=True, function_calling_llm=f"ollama/{Config.OLLAMA_TOOL_MODEL}")
 
         try:
             crew_result = crew.kickoff()

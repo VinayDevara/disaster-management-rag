@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 QUERY_FILE = "benchmark_queries.json"
 RESULT_FILE = "benchmark_results.json"
 REPORT_FILE = "benchmark_report.md"
+RUNS_DIR = "benchmark_runs"
 
 
 # ── stdout capture ──────────────────────────────────────────────────────────
@@ -116,6 +117,79 @@ def extract_response_text(result):
     return str(final)
 
 
+# ── semantic relevance ───────────────────────────────────────────────────────
+
+TOOL_DOMAIN = {
+    "get_current_weather": ["weather","temperature","wind","humidity","conditions"],
+    "get_forecast": ["forecast","weather","tomorrow","next","predict"],
+    "get_weather_by_city": ["weather","city","conditions"],
+    "get_openmeteo_forecasts": ["forecast","weather","predict","next"],
+    "get_gpm_rainfall": ["rainfall","rain","precipitation","gpm"],
+    "get_heavy_rainfall": ["rain","heavy","rainfall","precipitation"],
+    "get_high_precipitation_forecasts": ["rain","precipitation","forecast"],
+    "get_weather_events_in_area": ["weather","events","area","storm"],
+    "vector_search_weather": ["weather","search","similar"],
+    "get_active_events": ["disaster","events","active","alert"],
+    "get_active_official_alerts": ["alert","official","warning","sachet"],
+    "get_events_by_category": ["disaster","flood","cyclone","earthquake","category"],
+    "get_gdacs_events": ["gdacs","disaster","global"],
+    "get_gdacs_events_by_severity": ["gdacs","severity","disaster","alert"],
+    "get_recent_disasters": ["disaster","recent","event"],
+    "get_disaster_events_by_type": ["disaster","type","flood","cyclone"],
+    "get_official_alerts": ["alert","official","sachet","warning"],
+    "vector_search_disasters": ["disaster","search","similar"],
+    "get_high_risk_landslide": ["landslide","risk","slope"],
+    "get_landslide_snapshot": ["landslide","snapshot","risk"],
+    "get_all_flights": ["flight","plane","aircraft","fly"],
+    "get_flights_in_area": ["flight","area","near"],
+    "get_flights_near_location": ["flight","near","location","mangalore"],
+    "get_flight_by_callsign": ["flight","callsign"],
+    "get_flight_by_hex": ["flight","hex","icao"],
+    "get_flight_trajectory": ["flight","trajectory","path"],
+    "get_emergency_flights": ["emergency","flight","squawk"],
+    "vector_search_flights": ["flight","search","similar"],
+}
+AGENT_DOMAIN_KEYWORDS = {
+    "weather": ["weather","temperature","rain","rainfall","wind","humidity",
+                "forecast","storm","cyclone","precipitation","climate","cloud"],
+    "disaster": ["disaster","flood","earthquake","alert","gdacs","sachet",
+                 "landslide","emergency","risk","severity","relief","hazard"],
+    "flight": ["flight","fly","airport","aircraft","plane","aviation",
+               "mangalore","disruption"],
+}
+
+def semantic_score(query_text, tools_called, agents_invoked):
+    """Compute 0-1 semantic relevance: 0.6*agent_relevance + 0.4*tool_relevance."""
+    q = query_text.lower()
+    if not q.strip():
+        return (1.0, 1.0, 1.0)
+    query_domains = set()
+    for agent, kws in AGENT_DOMAIN_KEYWORDS.items():
+        if any(k in q for k in kws):
+            query_domains.add(agent)
+    if not query_domains:
+        agent_rel = 1.0
+    elif not agents_invoked:
+        agent_rel = 0.0
+    else:
+        overlap = len(query_domains & set(agents_invoked))
+        agent_rel = overlap / len(query_domains)
+    if not tools_called:
+        tool_rel = 0.5 if agents_invoked else 0.0
+    else:
+        scores = []
+        for tool in tools_called:
+            kws = TOOL_DOMAIN.get(tool, [])
+            if kws:
+                matches = sum(1 for k in kws if k in q)
+                scores.append(min(matches / max(len(kws), 1), 1.0))
+            else:
+                scores.append(0.3)
+        tool_rel = mean(scores) if scores else 0.0
+    combined = 0.6 * agent_rel + 0.4 * tool_rel
+    return (round(tool_rel, 3), round(agent_rel, 3), round(combined, 3))
+
+
 # ── scoring ─────────────────────────────────────────────────────────────────
 
 def score_results(results, queries):
@@ -126,6 +200,12 @@ def score_results(results, queries):
         resilience_pass=0, resilience_total=0,
         responses=0, no_crash=0, total=len(results),
     )
+    all_tools = set()
+    total_tool_invocations = 0
+    semantic_scores = []
+    consensus_count = 0
+    fallback_count = 0
+
     for r in results:
         exp = expected[r["id"]]
         cat = r["category"]
@@ -134,6 +214,19 @@ def score_results(results, queries):
             s["no_crash"] += 1
         if r["got_response"]:
             s["responses"] += 1
+        if r.get("consensus_applied"):
+            consensus_count += 1
+        if r.get("fallback_used"):
+            fallback_count += 1
+
+        # Tool counting
+        for t in r["tools_called"]:
+            all_tools.add(t)
+        total_tool_invocations += len(r["tools_called"])
+
+        # Semantic relevance
+        _, _, combined = semantic_score(r["query"], r["tools_called"], r["agents_invoked"])
+        semantic_scores.append(combined)
 
         # Routing (A-D: check expected agents are subset of actual)
         s["routing_total"] += 1
@@ -154,6 +247,18 @@ def score_results(results, queries):
             s["resilience_total"] += 1
             if not r["crashed"]:
                 s["resilience_pass"] += 1
+
+    # Add the new metrics to the scores dict
+    total_time = sum(r["response_time_sec"] for r in results)
+    s["total_execution_time"] = round(total_time, 1)
+    s["average_latency"] = round(total_time / len(results), 1) if results else 0
+    s["fallback_triggered_pct"] = round(fallback_count / len(results) * 100, 1) if results else 0
+    s["consensus_applied_pct"] = round(consensus_count / len(results) * 100, 1) if results else 0
+    s["unique_tools_invoked"] = len(all_tools)
+    s["total_tool_invocations"] = total_tool_invocations
+    s["semantic_relevance_score"] = round(mean(semantic_scores), 3) if semantic_scores else 0
+    s["fallback_count"] = fallback_count
+    s["consensus_count"] = consensus_count
 
     return s
 
@@ -202,7 +307,7 @@ def build_report(results, queries, scores):
     L.append(f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M')}  ")
     L.append(f"**Queries Executed:** {scores['total']}  ")
     L.append(f"**Total Execution Time:** {sum(r['response_time_sec'] for r in results):.1f}s  ")
-    L.append(f"**Architecture:** CrewAI 1.11 + DSPy | Groq (`llama-3.3-70b-versatile` reasoning + `qwen/qwen3-32b` tool-calling)  ")
+    L.append(f"**Architecture:** CrewAI 1.11 + DSPy | Local Ollama (`qwen2.5:3b` reasoning + tool-calling)  ")
     L.append("")
 
     # ── Methodology (so the reader understands what happened)
@@ -215,12 +320,36 @@ def build_report(results, queries, scores):
     L.append("| 4. Routing Check | DSPy classifier routes to primary + secondary agents. We check if the *expected* agents are a **subset** of the agents actually invoked. |")
     L.append("| 5. Tool Check | For Categories A-D we verify at least one CrewAI tool was called (tool selection accuracy). |")
     L.append("| 6. Resilience Check | For Categories E-F (edge cases / fallbacks) the pass criterion is simply *no crash*. |")
-    L.append("| 7. Rate-Limit Handling | A configurable delay between queries prevents Groq free-tier TPM exhaustion (default 65 s). |")
+    L.append("| 7. Rate-Limit Handling | A configurable delay between queries keeps local inference stable under repeated requests. |")
     L.append("| 8. Scoring | Metrics computed and this report generated automatically. |")
     L.append("")
 
     # ── Overall Metrics
+    total_time = scores["total_execution_time"]
+    avg_lat = scores["average_latency"]
+    fb_pct = scores["fallback_triggered_pct"]
+    cons_pct = scores["consensus_applied_pct"]
+    uniq_tools = scores["unique_tools_invoked"]
+    total_invoc = scores["total_tool_invocations"]
+    sem_score = scores["semantic_relevance_score"]
+
     L.append("## Overall Metrics\n")
+    L.append("| Metric | Result |")
+    L.append("|--------|--------|")
+    L.append(f"| Total Queries | {scores['total']} |")
+    L.append(f"| Total Execution Time | {total_time} s |")
+    L.append(f"| Average Latency | {avg_lat} s |")
+    L.append(f"| Routing Accuracy | {routing_pct:.1f}% |")
+    L.append(f"| Tool Selection Rate | {tool_pct:.1f}% |")
+    L.append(f"| Edge/Fallback Resilience | {resil_pct:.1f}% |")
+    L.append(f"| Fallback Triggered | {fb_pct}% |")
+    L.append(f"| Consensus Applied | {cons_pct}% |")
+    L.append(f"| Unique Tools Invoked | {uniq_tools} |")
+    L.append(f"| Total Tool Invocations | {total_invoc} |")
+    L.append(f"| Semantic Relevance Score | {sem_score:.3f} |")
+    L.append("")
+
+    L.append("## Targets\n")
     L.append("| Metric | Score | Target | Status |")
     L.append("|--------|-------|--------|--------|")
     L.append(f"| Routing Accuracy | {routing_pct:.1f}% | > 80% | {'✅' if routing_pct >= 80 else '❌'} |")
@@ -339,7 +468,16 @@ def main():
                         help="End at query ID (inclusive, default: 30)")
     parser.add_argument("--resume", action="store_true",
                         help="Skip queries that already have results in benchmark_results.json")
+    parser.add_argument("--run", type=int, default=None,
+                        help="Run number (saves to benchmark_runs/run_N.json). Omit for default behavior.")
     args = parser.parse_args()
+
+    # If --run is specified, save results per-run
+    if args.run is not None:
+        os.makedirs(RUNS_DIR, exist_ok=True)
+        RESULT_FILE_USED = os.path.join(RUNS_DIR, f"run_{args.run}.json")
+    else:
+        RESULT_FILE_USED = RESULT_FILE
 
     # Load query definitions
     with open(QUERY_FILE, "r", encoding="utf-8") as f:
@@ -348,8 +486,8 @@ def main():
     # Load existing results if resuming
     existing = []
     completed_ids = set()
-    if args.resume and os.path.exists(RESULT_FILE):
-        with open(RESULT_FILE, "r", encoding="utf-8") as f:
+    if args.resume and os.path.exists(RESULT_FILE_USED):
+        with open(RESULT_FILE_USED, "r", encoding="utf-8") as f:
             existing = json.load(f)
         completed_ids = {r["id"] for r in existing}
         print(f"Resuming: {len(completed_ids)} queries already completed, skipping them.")
@@ -445,7 +583,7 @@ def main():
         results.append(entry)
 
         # Save incrementally (survives interruption)
-        with open(RESULT_FILE, "w", encoding="utf-8") as f:
+        with open(RESULT_FILE_USED, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2)
 
         status_tag = "CRASH" if entry["crashed"] else "OK"
@@ -466,6 +604,26 @@ def main():
     with open(REPORT_FILE, "w", encoding="utf-8") as f:
         f.write(report)
 
+    # Save metrics JSON alongside results
+    metrics = {
+        "total_queries": scores["total"],
+        "total_execution_time": scores["total_execution_time"],
+        "average_latency": scores["average_latency"],
+        "routing_accuracy_pct": round(_pct(scores["routing_correct"], scores["routing_total"]), 1),
+        "tool_selection_rate_pct": round(_pct(scores["tool_used"], scores["tool_expected"]), 1),
+        "edge_fallback_resilience_pct": round(_pct(scores["resilience_pass"], scores["resilience_total"]), 1),
+        "fallback_triggered_pct": scores["fallback_triggered_pct"],
+        "consensus_applied_pct": scores["consensus_applied_pct"],
+        "unique_tools_invoked": scores["unique_tools_invoked"],
+        "total_tool_invocations": scores["total_tool_invocations"],
+        "semantic_relevance_score": scores["semantic_relevance_score"],
+        "response_rate_pct": round(_pct(scores["responses"], scores["total"]), 1),
+        "crash_free_pct": round(_pct(scores["no_crash"], scores["total"]), 1),
+    }
+    metrics_file = RESULT_FILE_USED.replace(".json", "_metrics.json")
+    with open(metrics_file, "w", encoding="utf-8") as f:
+        json.dump(metrics, f, indent=2)
+
     # Console summary
     print(f"\n{'=' * 80}")
     print("  BENCHMARK COMPLETE")
@@ -474,12 +632,21 @@ def main():
     te = scores["tool_expected"]
     re_ = scores["resilience_total"]
     t = scores["total"]
+    print(f"  Total Queries:         {t}")
+    print(f"  Total Execution Time:  {scores['total_execution_time']}s")
+    print(f"  Average Latency:       {scores['average_latency']}s")
     print(f"  Routing Accuracy:      {scores['routing_correct']}/{rt} = {_pct(scores['routing_correct'], rt):.0f}%")
-    print(f"  Tool Selection:        {scores['tool_used']}/{te} = {_pct(scores['tool_used'], te):.0f}%")
-    print(f"  Edge-Case Resilience:  {scores['resilience_pass']}/{re_} = {_pct(scores['resilience_pass'], re_):.0f}%")
+    print(f"  Tool Selection Rate:   {scores['tool_used']}/{te} = {_pct(scores['tool_used'], te):.0f}%")
+    print(f"  Edge/Fallback Resil.:  {scores['resilience_pass']}/{re_} = {_pct(scores['resilience_pass'], re_):.0f}%")
+    print(f"  Fallback Triggered:    {scores['fallback_count']}/{t} = {scores['fallback_triggered_pct']}%")
+    print(f"  Consensus Applied:     {scores['consensus_count']}/{t} = {scores['consensus_applied_pct']}%")
+    print(f"  Unique Tools Invoked:  {scores['unique_tools_invoked']}")
+    print(f"  Total Tool Invocations:{scores['total_tool_invocations']}")
+    print(f"  Semantic Relevance:    {scores['semantic_relevance_score']:.3f}")
     print(f"  Response Rate:         {scores['responses']}/{t} = {_pct(scores['responses'], t):.0f}%")
     print(f"  Crash-Free:            {scores['no_crash']}/{t} = {_pct(scores['no_crash'], t):.0f}%")
-    print(f"\n  Results: {RESULT_FILE}")
+    print(f"\n  Results: {RESULT_FILE_USED}")
+    print(f"  Metrics: {metrics_file}")
     print(f"  Report:  {REPORT_FILE}")
     print(f"{'=' * 80}\n")
 

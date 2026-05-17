@@ -262,7 +262,7 @@ type NewsPost = {
 };
 
 type RegionType = 'current location' | 'india' | 'global';
-type DetectedRegionType = 'india' | 'global';
+type DetectedRegionType = string;
 
 export default function SocialSignalsPanel() {
   const [posts, setPosts] = useState<NewsPost[]>([]);
@@ -294,10 +294,23 @@ export default function SocialSignalsPanel() {
 
           const data = await res.json();
           const country = data.address?.country?.toLowerCase() || '';
+          const state = data.address?.state?.toLowerCase() || '';
+          const city = (data.address?.city || data.address?.town || data.address?.county || data.address?.state_district || '')
+            .toLowerCase()
+            .replace(' district', '');
+
+          // Pass both city and state to the API so it can fallback to state news if city news is empty
+          const localRegion = city && state ? `${city},${state}` : city || state;
+          const displayLocation = city && state ? `${data.address.city || data.address.town || data.address.county || data.address.state_district}, ${data.address.state}` : (data.address.state || 'India');
 
           if (country.includes('india')) {
-            setDetectedRegion('india');
-            setLocationStatus('Showing news based on your current location in India.');
+            if (localRegion) {
+              setDetectedRegion(localRegion);
+              setLocationStatus(`Showing news based on your exact location: ${displayLocation}.`);
+            } else {
+              setDetectedRegion('india');
+              setLocationStatus('Showing news based on your current location in India.');
+            }
           } else {
             setDetectedRegion('global');
             setLocationStatus('Showing global news based on your current location.');
@@ -409,9 +422,16 @@ export default function SocialSignalsPanel() {
 
   const getRegionLabel = () => {
     if (regionFilter === 'current location') {
-      return detectedRegion === 'india'
-        ? 'Current location • India'
-        : 'Current location • Global';
+      if (detectedRegion === 'india') return 'Current location • India';
+      if (detectedRegion === 'global') return 'Current location • Global';
+      
+      // Capitalize first letter of each word for state display
+      const formattedState = detectedRegion
+        .split(' ')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+        
+      return `Current location • ${formattedState}`;
     }
 
     if (regionFilter === 'india') {

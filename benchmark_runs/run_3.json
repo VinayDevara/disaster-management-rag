@@ -1,0 +1,587 @@
+[
+  {
+    "id": 1,
+    "query": "What is the current temperature in Mangalore?",
+    "category": "A",
+    "agents_invoked": [
+      "weather"
+    ],
+    "tools_called": [
+      "get_current_weather",
+      "get_forecast",
+      "get_openmeteo_forecasts",
+      "get_weather_by_city",
+      "get_weather_events_in_area",
+      "vector_search_weather"
+    ],
+    "fallback_used": false,
+    "response_time_sec": 4.81,
+    "got_response": true,
+    "response_length": 674,
+    "crashed": false,
+    "error": null,
+    "classification_type": "simple",
+    "consensus_applied": false
+  },
+  {
+    "id": 2,
+    "query": "Are there any active flood alerts in Dakshina Kannada?",
+    "category": "A",
+    "agents_invoked": [
+      "disaster"
+    ],
+    "tools_called": [
+      "get_active_official_alerts",
+      "get_gdacs_events",
+      "get_gdacs_events_by_severity",
+      "get_official_alerts"
+    ],
+    "fallback_used": false,
+    "response_time_sec": 2.94,
+    "got_response": true,
+    "response_length": 782,
+    "crashed": false,
+    "error": null,
+    "classification_type": "simple",
+    "consensus_applied": false
+  },
+  {
+    "id": 3,
+    "query": "What flights are available from Mangalore airport?",
+    "category": "A",
+    "agents_invoked": [
+      "flight"
+    ],
+    "tools_called": [
+      "get_all_flights",
+      "get_flights_in_area",
+      "get_flights_near_location"
+    ],
+    "fallback_used": false,
+    "response_time_sec": 3.59,
+    "got_response": true,
+    "response_length": 576,
+    "crashed": false,
+    "error": null,
+    "classification_type": "simple",
+    "consensus_applied": false
+  },
+  {
+    "id": 4,
+    "query": "Show me rainfall data for the last 24 hours",
+    "category": "A",
+    "agents_invoked": [
+      "weather"
+    ],
+    "tools_called": [],
+    "fallback_used": false,
+    "response_time_sec": 2.16,
+    "got_response": true,
+    "response_length": 1519,
+    "crashed": false,
+    "error": null,
+    "classification_type": "simple",
+    "consensus_applied": false
+  },
+  {
+    "id": 5,
+    "query": "What is the humidity forecast for tomorrow?",
+    "category": "A",
+    "agents_invoked": [
+      "weather"
+    ],
+    "tools_called": [],
+    "fallback_used": false,
+    "response_time_sec": 2.16,
+    "got_response": true,
+    "response_length": 510,
+    "crashed": false,
+    "error": null,
+    "classification_type": "simple",
+    "consensus_applied": false
+  },
+  {
+    "id": 6,
+    "query": "Compare current weather conditions with the forecast for the next 3 days in Mangalore",
+    "category": "B",
+    "agents_invoked": [
+      "weather"
+    ],
+    "tools_called": [
+      "get_current_weather",
+      "get_forecast",
+      "get_openmeteo_forecasts",
+      "get_weather_events_in_area",
+      "vector_search_weather"
+    ],
+    "fallback_used": true,
+    "response_time_sec": 4.74,
+    "got_response": true,
+    "response_length": 1006,
+    "crashed": false,
+    "error": null,
+    "classification_type": "simple",
+    "consensus_applied": false
+  },
+  {
+    "id": 7,
+    "query": "Show me all active disaster alerts and their severity levels",
+    "category": "B",
+    "agents_invoked": [
+      "disaster"
+    ],
+    "tools_called": [],
+    "fallback_used": true,
+    "response_time_sec": 10.26,
+    "got_response": true,
+    "response_length": 16735,
+    "crashed": false,
+    "error": null,
+    "classification_type": "simple",
+    "consensus_applied": false
+  },
+  {
+    "id": 8,
+    "query": "What is the rainfall trend and landslide risk in the region?",
+    "category": "B",
+    "agents_invoked": [
+      "disaster",
+      "weather"
+    ],
+    "tools_called": [],
+    "fallback_used": true,
+    "response_time_sec": 29.89,
+    "got_response": true,
+    "response_length": 485,
+    "crashed": false,
+    "error": null,
+    "classification_type": "complex",
+    "consensus_applied": true
+  },
+  {
+    "id": 9,
+    "query": "List all GDACS events and SACHET alerts currently active",
+    "category": "B",
+    "agents_invoked": [
+      "disaster"
+    ],
+    "tools_called": [],
+    "fallback_used": true,
+    "response_time_sec": 9.51,
+    "got_response": true,
+    "response_length": 16773,
+    "crashed": false,
+    "error": null,
+    "classification_type": "simple",
+    "consensus_applied": false
+  },
+  {
+    "id": 10,
+    "query": "What are the wind conditions and any cyclone warnings near the coast?",
+    "category": "B",
+    "agents_invoked": [
+      "weather"
+    ],
+    "tools_called": [],
+    "fallback_used": true,
+    "response_time_sec": 8.41,
+    "got_response": true,
+    "response_length": 2488,
+    "crashed": false,
+    "error": null,
+    "classification_type": "simple",
+    "consensus_applied": false
+  },
+  {
+    "id": 11,
+    "query": "Is it safe to fly from Mangalore given current weather and disaster conditions?",
+    "category": "C",
+    "agents_invoked": [
+      "flight",
+      "weather",
+      "disaster"
+    ],
+    "tools_called": [
+      "get_active_events",
+      "get_active_official_alerts",
+      "get_all_flights",
+      "get_current_weather",
+      "get_emergency_flights",
+      "get_events_in_area",
+      "get_flights_near_location",
+      "get_gdacs_events_by_severity",
+      "get_landslide_snapshot",
+      "get_official_alerts",
+      "get_openmeteo_forecasts",
+      "get_weather_events_in_area",
+      "vector_search_disasters",
+      "vector_search_weather"
+    ],
+    "fallback_used": true,
+    "response_time_sec": 38.9,
+    "got_response": true,
+    "response_length": 488,
+    "crashed": false,
+    "error": null,
+    "classification_type": "complex",
+    "consensus_applied": true
+  },
+  {
+    "id": 12,
+    "query": "How will the weather affect disaster relief operations today?",
+    "category": "C",
+    "agents_invoked": [
+      "weather",
+      "disaster"
+    ],
+    "tools_called": [
+      "get_current_weather",
+      "get_landslide_snapshot",
+      "get_openmeteo_forecasts",
+      "get_weather_events_in_area",
+      "vector_search_weather"
+    ],
+    "fallback_used": true,
+    "response_time_sec": 42.26,
+    "got_response": true,
+    "response_length": 488,
+    "crashed": false,
+    "error": null,
+    "classification_type": "complex",
+    "consensus_applied": true
+  },
+  {
+    "id": 13,
+    "query": "Should I travel to Mangalore this week considering weather and disaster risks?",
+    "category": "C",
+    "agents_invoked": [
+      "disaster",
+      "weather"
+    ],
+    "tools_called": [],
+    "fallback_used": false,
+    "response_time_sec": 14.21,
+    "got_response": true,
+    "response_length": 1232,
+    "crashed": false,
+    "error": null,
+    "classification_type": "complex",
+    "consensus_applied": true
+  },
+  {
+    "id": 14,
+    "query": "What is the overall risk assessment for Dakshina Kannada right now?",
+    "category": "C",
+    "agents_invoked": [
+      "disaster"
+    ],
+    "tools_called": [],
+    "fallback_used": false,
+    "response_time_sec": 2.48,
+    "got_response": true,
+    "response_length": 1252,
+    "crashed": false,
+    "error": null,
+    "classification_type": "simple",
+    "consensus_applied": false
+  },
+  {
+    "id": 15,
+    "query": "Are there any weather-related flight disruptions expected?",
+    "category": "C",
+    "agents_invoked": [
+      "weather",
+      "flight"
+    ],
+    "tools_called": [
+      "get_all_flights",
+      "get_emergency_flights",
+      "get_flight_by_callsign",
+      "get_flights_in_area"
+    ],
+    "fallback_used": true,
+    "response_time_sec": 16.47,
+    "got_response": true,
+    "response_length": 480,
+    "crashed": false,
+    "error": null,
+    "classification_type": "complex",
+    "consensus_applied": true
+  },
+  {
+    "id": 16,
+    "query": "Compare the flood risk in the last week with current rainfall data and tell me if the landslide probability is increasing",
+    "category": "D",
+    "agents_invoked": [
+      "disaster",
+      "weather"
+    ],
+    "tools_called": [
+      "get_active_official_alerts",
+      "get_current_weather",
+      "get_disaster_events_by_type",
+      "get_gdacs_events_by_severity",
+      "get_gpm_rainfall",
+      "get_heavy_rainfall",
+      "get_high_precipitation_forecasts",
+      "get_high_risk_landslide",
+      "get_landslide_snapshot",
+      "get_openmeteo_forecasts",
+      "get_recent_disasters"
+    ],
+    "fallback_used": true,
+    "response_time_sec": 37.45,
+    "got_response": true,
+    "response_length": 488,
+    "crashed": false,
+    "error": null,
+    "classification_type": "complex",
+    "consensus_applied": true
+  },
+  {
+    "id": 17,
+    "query": "Given the cyclone history in the Bay of Bengal and current weather patterns, what should emergency services prepare for?",
+    "category": "D",
+    "agents_invoked": [
+      "weather",
+      "disaster"
+    ],
+    "tools_called": [],
+    "fallback_used": false,
+    "response_time_sec": 16.42,
+    "got_response": true,
+    "response_length": 481,
+    "crashed": false,
+    "error": null,
+    "classification_type": "complex",
+    "consensus_applied": true
+  },
+  {
+    "id": 18,
+    "query": "Analyze all data sources and give me a comprehensive risk report for Dakshina Kannada",
+    "category": "D",
+    "agents_invoked": [
+      "disaster",
+      "weather"
+    ],
+    "tools_called": [],
+    "fallback_used": true,
+    "response_time_sec": 46.15,
+    "got_response": true,
+    "response_length": 486,
+    "crashed": false,
+    "error": null,
+    "classification_type": "complex",
+    "consensus_applied": true
+  },
+  {
+    "id": 19,
+    "query": "What were the most severe disasters in this region, and are current conditions similar to any of them?",
+    "category": "D",
+    "agents_invoked": [
+      "disaster",
+      "weather"
+    ],
+    "tools_called": [],
+    "fallback_used": true,
+    "response_time_sec": 30.22,
+    "got_response": true,
+    "response_length": 492,
+    "crashed": false,
+    "error": null,
+    "classification_type": "complex",
+    "consensus_applied": true
+  },
+  {
+    "id": 20,
+    "query": "Cross-reference weather forecasts with historical disaster patterns to predict the next 48 hours",
+    "category": "D",
+    "agents_invoked": [
+      "weather",
+      "disaster"
+    ],
+    "tools_called": [],
+    "fallback_used": true,
+    "response_time_sec": 31.2,
+    "got_response": true,
+    "response_length": 486,
+    "crashed": false,
+    "error": null,
+    "classification_type": "complex",
+    "consensus_applied": true
+  },
+  {
+    "id": 21,
+    "query": "Hello",
+    "category": "E",
+    "agents_invoked": [
+      "disaster"
+    ],
+    "tools_called": [],
+    "fallback_used": true,
+    "response_time_sec": 9.9,
+    "got_response": true,
+    "response_length": 16703,
+    "crashed": false,
+    "error": null,
+    "classification_type": "simple",
+    "consensus_applied": false
+  },
+  {
+    "id": 22,
+    "query": "What is the capital of France?",
+    "category": "E",
+    "agents_invoked": [
+      "flight"
+    ],
+    "tools_called": [],
+    "fallback_used": true,
+    "response_time_sec": 7.16,
+    "got_response": true,
+    "response_length": 3787,
+    "crashed": false,
+    "error": null,
+    "classification_type": "simple",
+    "consensus_applied": false
+  },
+  {
+    "id": 23,
+    "query": "Tell me everything",
+    "category": "E",
+    "agents_invoked": [
+      "disaster",
+      "flight",
+      "weather"
+    ],
+    "tools_called": [],
+    "fallback_used": true,
+    "response_time_sec": 37.16,
+    "got_response": true,
+    "response_length": 486,
+    "crashed": false,
+    "error": null,
+    "classification_type": "complex",
+    "consensus_applied": true
+  },
+  {
+    "id": 24,
+    "query": "weather disaster flight all info now",
+    "category": "E",
+    "agents_invoked": [
+      "disaster",
+      "weather",
+      "flight"
+    ],
+    "tools_called": [],
+    "fallback_used": true,
+    "response_time_sec": 37.08,
+    "got_response": true,
+    "response_length": 486,
+    "crashed": false,
+    "error": null,
+    "classification_type": "complex",
+    "consensus_applied": true
+  },
+  {
+    "id": 25,
+    "query": "",
+    "category": "E",
+    "agents_invoked": [],
+    "tools_called": [],
+    "fallback_used": false,
+    "response_time_sec": 0.0,
+    "got_response": true,
+    "response_length": 0,
+    "crashed": false,
+    "error": null,
+    "classification_type": "none",
+    "consensus_applied": false
+  },
+  {
+    "id": 26,
+    "query": "Give me the exact GPS coordinates of every flood in India in the last 100 years",
+    "category": "F",
+    "agents_invoked": [
+      "disaster",
+      "weather"
+    ],
+    "tools_called": [],
+    "fallback_used": true,
+    "response_time_sec": 34.56,
+    "got_response": true,
+    "response_length": 486,
+    "crashed": false,
+    "error": null,
+    "classification_type": "complex",
+    "consensus_applied": true
+  },
+  {
+    "id": 27,
+    "query": "What is the quantum mechanical probability of rain tomorrow?",
+    "category": "F",
+    "agents_invoked": [
+      "weather"
+    ],
+    "tools_called": [],
+    "fallback_used": true,
+    "response_time_sec": 7.68,
+    "got_response": true,
+    "response_length": 2488,
+    "crashed": false,
+    "error": null,
+    "classification_type": "simple",
+    "consensus_applied": false
+  },
+  {
+    "id": 28,
+    "query": "Run a simulation of a category 5 cyclone hitting Mangalore",
+    "category": "F",
+    "agents_invoked": [
+      "disaster",
+      "weather"
+    ],
+    "tools_called": [],
+    "fallback_used": true,
+    "response_time_sec": 43.93,
+    "got_response": true,
+    "response_length": 486,
+    "crashed": false,
+    "error": null,
+    "classification_type": "complex",
+    "consensus_applied": true
+  },
+  {
+    "id": 29,
+    "query": "Compare disaster data from 1950 with current readings",
+    "category": "F",
+    "agents_invoked": [
+      "disaster"
+    ],
+    "tools_called": [],
+    "fallback_used": true,
+    "response_time_sec": 17.98,
+    "got_response": true,
+    "response_length": 16785,
+    "crashed": false,
+    "error": null,
+    "classification_type": "complex",
+    "consensus_applied": false
+  },
+  {
+    "id": 30,
+    "query": "Translate the weather forecast into Kannada",
+    "category": "F",
+    "agents_invoked": [
+      "weather"
+    ],
+    "tools_called": [],
+    "fallback_used": true,
+    "response_time_sec": 7.9,
+    "got_response": true,
+    "response_length": 2488,
+    "crashed": false,
+    "error": null,
+    "classification_type": "simple",
+    "consensus_applied": false
+  }
+]

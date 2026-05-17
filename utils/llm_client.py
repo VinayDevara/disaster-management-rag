@@ -1,134 +1,142 @@
 """
-LLM Client for Groq API
-Handles all LLM interactions with error handling and retries
+LLM Client for DisasterRAG local Qwen inference.
+
+This module uses Ollama exclusively and applies the shared disaster/tooling
+instruction block to all direct generation and tool-calling requests.
 """
-import os
 import json
 from typing import Dict, List, Optional, Any
-from groq import Groq
+import httpx
 import dspy
+from crewai import LLM
 from config.config import Config
+
 
 class LLMClient:
     """
-    Unified LLM client for Groq API
-    Can be easily swapped for SLM later
+    Unified local LLM client backed by Ollama and Qwen.
+
+    The client always talks to the local Ollama daemon. A shared disaster
+    instruction block is prepended to requests so the model consistently
+    follows the tool-calling and grounding rules.
     """
-    
+
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
-        self.api_key = api_key or Config.GROQ_API_KEY
-        self.model = model or Config.GROQ_MODEL
-        self.client = Groq(api_key=self.api_key)
+        self.model = model or Config.OLLAMA_MODEL
+        self.tool_model = Config.OLLAMA_TOOL_MODEL or self.model
+        self.ollama_base_url = Config.OLLAMA_BASE_URL
+        self.system_prompt = Config.QWEN_SYSTEM_PROMPT
+        self._active_provider = "ollama"
+
         self.init_dspy()
-        
+
+    # ── DSPy configuration ──────────────────────────────────────────────
+
     def init_dspy(self):
-        """Initialize DSPy globally with the Groq model"""
-        lm = dspy.LM(f'groq/{self.model}', api_key=self.api_key)
-        dspy.configure(lm=lm)
-        return lm
-        
+        try:
+            lm = dspy.LM(
+                f"ollama_chat/{self.model}",
+                api_base=self.ollama_base_url,
+                api_key="",
+            )
+            dspy.configure(lm=lm)
+        except Exception as e:
+            print(f"❌ DSPy/Ollama init also failed: {e}")
+
+    def _compose_system_prompt(self, system_prompt: Optional[str]) -> str:
+        if system_prompt:
+            return f"{self.system_prompt}\n\n{system_prompt}".strip()
+        return self.system_prompt
+
+    # ── Ollama REST helpers ─────────────────────────────────────────────
+
+    def _ollama_chat(self, messages, temperature, max_tokens, json_mode=False):
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens,
+                "top_p": Config.TOP_P,
+            },
+        }
+        if json_mode:
+            payload["format"] = "json"
+        resp = httpx.post(
+            f"{self.ollama_base_url}/api/chat", json=payload, timeout=180.0,
+        )
+        resp.raise_for_status()
+        return resp.json()["message"]["content"]
+
+    def _ollama_chat_with_tools(self, messages, tools, temperature, max_tokens):
+        payload = {
+            "model": self.tool_model,
+            "messages": messages,
+            "tools": tools,
+            "stream": False,
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens,
+            },
+        }
+        resp = httpx.post(
+            f"{self.ollama_base_url}/api/chat", json=payload, timeout=180.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        result: Dict[str, Any] = {
+            "content": data["message"].get("content", ""),
+            "tool_calls": [],
+        }
+        for tc in data["message"].get("tool_calls", []):
+            args = tc["function"]["arguments"]
+            result["tool_calls"].append({
+                "id": tc.get("id", ""),
+                "name": tc["function"]["name"],
+                "arguments": args if isinstance(args, dict) else json.loads(args),
+            })
+        return result
+
+    # ── Public generation API ───────────────────────────────────────────
+
     def generate(
         self,
         prompt: str,
         system_prompt: Optional[str] = None,
         temperature: float = Config.TEMPERATURE,
         max_tokens: int = Config.MAX_TOKENS,
-        json_mode: bool = False
+        json_mode: bool = False,
     ) -> str:
-        """
-        Generate response from LLM
-        
-        Args:
-            prompt: User prompt
-            system_prompt: System instruction
-            temperature: Sampling temperature
-            max_tokens: Maximum tokens to generate
-            json_mode: Whether to expect JSON output
-            
-        Returns:
-            Generated text response
-        """
-        messages = []
-        
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        
+        messages = [{"role": "system", "content": self._compose_system_prompt(system_prompt)}]
         messages.append({"role": "user", "content": prompt})
-        
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                top_p=Config.TOP_P,
-                response_format={"type": "json_object"} if json_mode else {"type": "text"}
-            )
-            
-            return response.choices[0].message.content
-        
+            return self._ollama_chat(messages, temperature, max_tokens, json_mode)
         except Exception as e:
-            print(f"❌ LLM Error: {e}")
-            return f"Error generating response: {str(e)}"
-    
+            print(f"❌ Ollama error: {e}")
+            return f"Error generating response locally: {str(e)}"
+
     def generate_with_tools(
         self,
         prompt: str,
         system_prompt: str,
         tools: List[Dict],
-        tool_choice: str = "auto"
+        tool_choice: str = "auto",
     ) -> Dict[str, Any]:
-        """
-        Generate response with tool calling capability
-        
-        Args:
-            prompt: User prompt
-            system_prompt: System instruction
-            tools: List of available tools
-            tool_choice: Tool selection strategy
-            
-        Returns:
-            Dictionary with response and tool calls
-        """
         messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt}
+            {"role": "system", "content": self._compose_system_prompt(system_prompt)},
+            {"role": "user", "content": prompt},
         ]
-        
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                tools=tools,
-                tool_choice=tool_choice,
-                temperature=Config.TEMPERATURE,
-                max_tokens=Config.MAX_TOKENS
+            return self._ollama_chat_with_tools(
+                messages, tools, Config.TEMPERATURE, Config.MAX_TOKENS,
             )
-            
-            choice = response.choices[0]
-            result = {
-                "content": choice.message.content,
-                "tool_calls": []
-            }
-            
-            # Extract tool calls if present
-            if hasattr(choice.message, 'tool_calls') and choice.message.tool_calls:
-                for tool_call in choice.message.tool_calls:
-                    result["tool_calls"].append({
-                        "id": tool_call.id,
-                        "name": tool_call.function.name,
-                        "arguments": json.loads(tool_call.function.arguments)
-                    })
-            
-            return result
-        
         except Exception as e:
-            print(f"❌ LLM Tool Error: {e}")
-            return {
-                "content": f"Error: {str(e)}",
-                "tool_calls": []
-            }
-    
+            return {"content": f"Error generating tool response locally: {str(e)}", "tool_calls": []}
+
+    # ── Higher-level helpers (unchanged logic, use generate()) ──────────
+
     def classify_query(self, query: str, categories: List[str]) -> Dict[str, Any]:
         """
         Classify query into categories using LLM
@@ -241,3 +249,27 @@ def get_llm_client() -> LLMClient:
     if _llm_client is None:
         _llm_client = LLMClient()
     return _llm_client
+
+
+# ── CrewAI LLM factories (provider-aware) ───────────────────────────────
+
+def get_crewai_llm() -> LLM:
+    """Return a CrewAI-compatible LLM using the local Ollama Qwen model."""
+    return LLM(
+        model=f"ollama/{Config.OLLAMA_MODEL}",
+        base_url=Config.OLLAMA_BASE_URL,
+        temperature=Config.TEMPERATURE,
+        max_tokens=512,
+        timeout=120,
+    )
+
+
+def get_crewai_tool_llm() -> LLM:
+    """Return a CrewAI tool-calling LLM using the local Ollama Qwen model."""
+    return LLM(
+        model=f"ollama/{Config.OLLAMA_TOOL_MODEL}",
+        base_url=Config.OLLAMA_BASE_URL,
+        temperature=0.1,
+        max_tokens=512,
+        timeout=120,
+    )
