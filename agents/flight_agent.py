@@ -13,6 +13,9 @@ import json
 import dspy
 from crewai import Agent, Task, Crew, LLM
 from crewai.tools import BaseTool
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def create_flight_tools(sql_tool: SQLTool, vector_db: VectorDBManager) -> List[BaseTool]:
@@ -167,9 +170,51 @@ class FlightAgent:
         """
         Process flight-related query using CrewAI agent + DSPy response synthesis.
         """
-        print(f"✈️  Flight Agent processing: {query}")
+        logger.info(f"✈️  Flight Agent processing: {query}")
 
-        context_str = json.dumps(context, default=str) if context else "No additional context."
+        trajectory_logger = context.get('trajectory_logger') if context else None
+        context_str = json.dumps({k:v for k,v in (context or {}).items() if k != 'trajectory_logger'}, default=str) if context else "No additional context."
+        
+        def step_callback(step_output):
+            if not trajectory_logger or not step_output: return
+            if isinstance(step_output, list) and len(step_output) == 0: return
+            
+            try:
+                thought = ""
+                action = ""
+                action_input = {}
+                observation = ""
+                
+                if isinstance(step_output, list):
+                    step_output = step_output[-1]
+                
+                if isinstance(step_output, tuple) and len(step_output) >= 2:
+                    action_obj, obs = step_output[0], step_output[1]
+                    thought = getattr(action_obj, 'log', getattr(action_obj, 'thought', ''))
+                    action = getattr(action_obj, 'tool', str(action_obj))
+                    action_input = getattr(action_obj, 'tool_input', {})
+                    observation = str(obs)
+                elif hasattr(step_output, 'return_values') or step_output.__class__.__name__ == 'AgentFinish':
+                    # It's an AgentFinish object
+                    thought = getattr(step_output, 'log', getattr(step_output, 'thought', ''))
+                    action = "AgentFinish"
+                    observation = getattr(step_output, 'return_values', str(step_output))
+                else:
+                    thought = getattr(step_output, 'thought', getattr(step_output, 'log', getattr(step_output, 'text', '')))
+                    action = getattr(step_output, 'tool', getattr(step_output, 'action', ''))
+                    action_input = getattr(step_output, 'tool_input', getattr(step_output, 'action_input', {}))
+                    observation = getattr(step_output, 'result', getattr(step_output, 'observation', str(step_output)))
+                    
+                trajectory_logger.log_step(
+                    thought=str(thought),
+                    action=str(action),
+                    action_input=action_input if isinstance(action_input, dict) else {"input": str(action_input)},
+                    observation=str(observation)[:1000]
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log step: {e}")
+                
+        self.crew_agent.step_callback = step_callback
 
         task = Task(
             description=(
@@ -194,8 +239,8 @@ class FlightAgent:
             crew_result = crew.kickoff()
             raw_output = str(crew_result)
         except Exception as e:
-            print(f"⚠️ CrewAI flight execution failed: {e}")
-            print("🔄 Falling back to direct tool queries...")
+            logger.warning(f"⚠️ CrewAI flight execution failed: {e}")
+            logger.info("🔄 Falling back to direct tool queries...")
             raw_output = self._fallback_direct_query(query)
 
         # Use DSPy for structured response generation
@@ -206,7 +251,7 @@ class FlightAgent:
             )
             answer = dspy_result.response
         except Exception as e:
-            print(f"⚠️ DSPy flight response generation failed: {e}")
+            logger.warning(f"⚠️ DSPy flight response generation failed: {e}")
             answer = raw_output
 
         return {
@@ -256,6 +301,7 @@ class FlightAgent:
         agents: Dict[str, Any],
         consensus_agent: Any,
         error_msg: str,
+        trajectory_logger=None,
     ) -> Dict[str, Any]:
         """
         Fallback orchestrator mode.
@@ -264,8 +310,8 @@ class FlightAgent:
         """
         from datetime import datetime
 
-        print("🔄 Flight Agent acting as BACKUP orchestrator")
-        print(f"   Primary orchestrator error: {error_msg}")
+        logger.info("🔄 Flight Agent acting as BACKUP orchestrator")
+        logger.warning(f"   Primary orchestrator error: {error_msg}")
         start_time = datetime.now()
 
         agent_results = {}
@@ -273,13 +319,13 @@ class FlightAgent:
         # Try every agent, collect whatever works
         for agent_name, agent in agents.items():
             try:
-                print(f"   → Invoking {agent_name.title()} Agent...")
-                result = agent.process(query)
+                logger.info(f"   → Invoking {agent_name.title()} Agent...")
+                result = agent.process(query, context={"trajectory_logger": trajectory_logger})
                 agent_results[agent_name] = result
                 data_count = result.get("data_count", 0) or result.get("event_count", 0)
-                print(f"     ✓ Retrieved {data_count} data points")
+                logger.info(f"     ✓ Retrieved {data_count} data points")
             except Exception as e:
-                print(f"     ✗ {agent_name.title()} Agent failed: {e}")
+                logger.warning(f"     ✗ {agent_name.title()} Agent failed: {e}")
                 agent_results[agent_name] = {
                     "agent": agent_name,
                     "answer": f"Agent unavailable: {e}",
@@ -293,12 +339,12 @@ class FlightAgent:
         final_response = None
         if len(successful) > 1:
             try:
-                print("   → Running consensus on available results...")
+                logger.info("   → Running consensus on available results...")
                 final_response = consensus_agent.process(
                     query, agent_results, {"query_type": "complex"}
                 )
             except Exception as e:
-                print(f"     ✗ Consensus failed: {e}")
+                logger.warning(f"     ✗ Consensus failed: {e}")
 
         # Fall back to best single agent result
         if final_response is None:
@@ -351,4 +397,4 @@ if __name__ == "__main__":
     agent = FlightAgent(db, vector_db)
 
     result = agent.process("Show me all emergency flights")
-    print(json.dumps(result, indent=2, default=str))
+    logger.info(json.dumps(result, indent=2, default=str))

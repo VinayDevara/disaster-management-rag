@@ -10,6 +10,9 @@ from agents.dspy_signatures import GenerateEmergencyCommandPlan
 import json
 import math
 import dspy
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ConsensusAgent:
@@ -33,7 +36,7 @@ class ConsensusAgent:
         classification: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Process results from multiple agents and generate consensus."""
-        print(f"🤝 Consensus Agent processing {len(agent_results)} agent results")
+        logger.info(f"🤝 Consensus Agent processing {len(agent_results)} agent results")
 
         try:
             extracted_data = self._extract_key_data(agent_results)
@@ -53,7 +56,7 @@ class ConsensusAgent:
                 )
                 unified_response = result.response
             except Exception as e:
-                print(f"⚠️ DSPy unified response generation failed: {e}")
+                logger.warning(f"⚠️ DSPy unified response generation failed: {e}")
                 unified_response = f"Error generating unified emergency plan: {e}"
 
             return {
@@ -75,14 +78,14 @@ class ConsensusAgent:
             }
 
         except Exception as e:
-            print(f"⚠️ Consensus generation failed: {str(e)}")
+            logger.warning(f"⚠️ Consensus generation failed: {str(e)}")
             return self._generate_fallback_response(original_query, agent_results, str(e))
 
     def _generate_fallback_response(
         self, original_query: str, agent_results: Dict[str, Any], error_message: str
     ) -> Dict[str, Any]:
         """Generate a fallback response by concatenating agent results."""
-        print("🔄 Generating fallback response...")
+        logger.info("🔄 Generating fallback response...")
 
         fallback_parts = [
             f"**Note:** Comprehensive analysis is currently unavailable due to a system error "
@@ -361,4 +364,4 @@ if __name__ == "__main__":
         mock_results,
         {"query_type": "complex"},
     )
-    print(json.dumps(result, indent=2, default=str))
+    logger.info(json.dumps(result, indent=2, default=str))

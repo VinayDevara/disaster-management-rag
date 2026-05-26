@@ -1,0 +1,30 @@
+{
+  "query": "pls fetch details on the last 2 flights",
+  "started_at": "2026-05-04T20:50:03.506308+00:00",
+  "max_steps": 15,
+  "steps": [
+    {
+      "step": 1,
+      "thought": "Orchestrator classified query. Type: simple. Primary: flight.",
+      "action": "orchestrator_decompose",
+      "action_input": {
+        "classification": {
+          "query_type": "simple",
+          "primary_agent": "flight",
+          "secondary_agents": [],
+          "requires_cross_intelligence": false,
+          "reasoning": "The query is specifically asking for details about flights, which falls under the flight agent's domain.",
+          "extracted_entities": {}
+        },
+        "sub_queries": {
+          "flight": "pls fetch details on the last 2 flights"
+        }
+      },
+      "observation": "Decomposition complete. Passing to sub-agents."
+    }
+  ],
+  "final_answer": "Currently, there is an issue with accessing the flight data, and no results were returned. This might be due to a temporary connectivity issue or a problem with the database. I recommend trying again later or checking if there is a known issue with the data source. Unfortunately, without the data, I cannot provide details on the last two flights at this time.",
+  "finished_at": "2026-05-04T20:50:30.856396+00:00",
+  "total_steps": 1,
+  "status": "completed"
+}

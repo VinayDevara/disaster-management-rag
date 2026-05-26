@@ -1,0 +1,30 @@
+{
+  "query": "what was the last flight to enter mangalore",
+  "started_at": "2026-05-04T20:42:10.995412+00:00",
+  "max_steps": 15,
+  "steps": [
+    {
+      "step": 1,
+      "thought": "Orchestrator classified query. Type: simple. Primary: flight.",
+      "action": "orchestrator_decompose",
+      "action_input": {
+        "classification": {
+          "query_type": "simple",
+          "primary_agent": "flight",
+          "secondary_agents": [],
+          "requires_cross_intelligence": false,
+          "reasoning": "Classification failed (litellm.BadRequestError: GroqException - {\"error\":{\"message\":\"Invalid API Key\",\"type\":\"invalid_request_error\",\"code\":\"invalid_api_key\"}}\n), defaulting to flight agent",
+          "extracted_entities": {}
+        },
+        "sub_queries": {
+          "flight": "what was the last flight to enter mangalore"
+        }
+      },
+      "observation": "Decomposition complete. Passing to sub-agents."
+    }
+  ],
+  "final_answer": "No flight data available for this query.",
+  "finished_at": "2026-05-04T20:42:12.626501+00:00",
+  "total_steps": 1,
+  "status": "completed"
+}

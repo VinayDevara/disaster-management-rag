@@ -6,7 +6,8 @@ instruction block to all direct generation and tool-calling requests.
 """
 import json
 from typing import Dict, List, Optional, Any
-import httpx
+from groq import Groq
+from openai import OpenAI
 import dspy
 from crewai import LLM
 from config.config import Config
@@ -20,87 +21,32 @@ class LLMClient:
     instruction block is prepended to requests so the model consistently
     follows the tool-calling and grounding rules.
     """
-
-    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
-        self.model = model or Config.OLLAMA_MODEL
-        self.tool_model = Config.OLLAMA_TOOL_MODEL or self.model
-        self.ollama_base_url = Config.OLLAMA_BASE_URL
-        self.system_prompt = Config.QWEN_SYSTEM_PROMPT
-        self._active_provider = "ollama"
-
+    
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, provider: Optional[str] = None):
+        self.provider = provider or Config.LLM_PROVIDER
+        
+        if self.provider == "openai":
+            self.api_key = api_key or Config.OPENAI_API_KEY
+            self.model = model or Config.OPENAI_MODEL
+            self.client = OpenAI(api_key=self.api_key)
+        else:
+            self.api_key = api_key or Config.GROQ_API_KEY
+            self.model = model or Config.GROQ_MODEL
+            self.client = Groq(api_key=self.api_key)
+            
         self.init_dspy()
 
     # ── DSPy configuration ──────────────────────────────────────────────
 
     def init_dspy(self):
-        try:
-            lm = dspy.LM(
-                f"ollama_chat/{self.model}",
-                api_base=self.ollama_base_url,
-                api_key="",
-            )
-            dspy.configure(lm=lm)
-        except Exception as e:
-            print(f"❌ DSPy/Ollama init also failed: {e}")
-
-    def _compose_system_prompt(self, system_prompt: Optional[str]) -> str:
-        if system_prompt:
-            return f"{self.system_prompt}\n\n{system_prompt}".strip()
-        return self.system_prompt
-
-    # ── Ollama REST helpers ─────────────────────────────────────────────
-
-    def _ollama_chat(self, messages, temperature, max_tokens, json_mode=False):
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "stream": False,
-            "options": {
-                "temperature": temperature,
-                "num_predict": max_tokens,
-                "top_p": Config.TOP_P,
-            },
-        }
-        if json_mode:
-            payload["format"] = "json"
-        resp = httpx.post(
-            f"{self.ollama_base_url}/api/chat", json=payload, timeout=180.0,
-        )
-        resp.raise_for_status()
-        return resp.json()["message"]["content"]
-
-    def _ollama_chat_with_tools(self, messages, tools, temperature, max_tokens):
-        payload = {
-            "model": self.tool_model,
-            "messages": messages,
-            "tools": tools,
-            "stream": False,
-            "options": {
-                "temperature": temperature,
-                "num_predict": max_tokens,
-            },
-        }
-        resp = httpx.post(
-            f"{self.ollama_base_url}/api/chat", json=payload, timeout=180.0,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-        result: Dict[str, Any] = {
-            "content": data["message"].get("content", ""),
-            "tool_calls": [],
-        }
-        for tc in data["message"].get("tool_calls", []):
-            args = tc["function"]["arguments"]
-            result["tool_calls"].append({
-                "id": tc.get("id", ""),
-                "name": tc["function"]["name"],
-                "arguments": args if isinstance(args, dict) else json.loads(args),
-            })
-        return result
-
-    # ── Public generation API ───────────────────────────────────────────
-
+        """Initialize DSPy globally with the selected model"""
+        if self.provider == "openai":
+            lm = dspy.LM(f'openai/{self.model}', api_key=self.api_key)
+        else:
+            lm = dspy.LM(f'groq/{self.model}', api_key=self.api_key)
+        dspy.configure(lm=lm)
+        return lm
+        
     def generate(
         self,
         prompt: str,
@@ -250,26 +196,14 @@ def get_llm_client() -> LLMClient:
         _llm_client = LLMClient()
     return _llm_client
 
+def get_crewai_llm():
+    from crewai import LLM
+    if Config.LLM_PROVIDER == "openai":
+        return LLM(model=f"openai/{Config.OPENAI_MODEL}", api_key=Config.OPENAI_API_KEY)
+    return LLM(model=f"groq/{Config.GROQ_MODEL}", api_key=Config.GROQ_API_KEY)
 
-# ── CrewAI LLM factories (provider-aware) ───────────────────────────────
-
-def get_crewai_llm() -> LLM:
-    """Return a CrewAI-compatible LLM using the local Ollama Qwen model."""
-    return LLM(
-        model=f"ollama/{Config.OLLAMA_MODEL}",
-        base_url=Config.OLLAMA_BASE_URL,
-        temperature=Config.TEMPERATURE,
-        max_tokens=512,
-        timeout=120,
-    )
-
-
-def get_crewai_tool_llm() -> LLM:
-    """Return a CrewAI tool-calling LLM using the local Ollama Qwen model."""
-    return LLM(
-        model=f"ollama/{Config.OLLAMA_TOOL_MODEL}",
-        base_url=Config.OLLAMA_BASE_URL,
-        temperature=0.1,
-        max_tokens=512,
-        timeout=120,
-    )
+def get_crewai_tool_llm():
+    from crewai import LLM
+    if Config.LLM_PROVIDER == "openai":
+        return LLM(model=f"openai/{Config.OPENAI_MODEL}", api_key=Config.OPENAI_API_KEY)
+    return LLM(model=f"groq/{Config.GROQ_MODEL}", api_key=Config.GROQ_API_KEY)
