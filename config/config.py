@@ -242,12 +242,16 @@ ERROR HANDLING
     # ── Retention / archival ─────────────────────────────────────────────
     HOT_RETENTION_HOURS = int(os.getenv("HOT_RETENTION_HOURS", "24"))
     WARM_RETENTION_DAYS = int(os.getenv("WARM_RETENTION_DAYS", "30"))
+    RAW_PAYLOAD_RETENTION_DAYS = int(os.getenv("RAW_PAYLOAD_RETENTION_DAYS", "7"))
     COLD_ARCHIVE_DIR = str(
         Path(os.getenv("COLD_ARCHIVE_DIR", str(DATA_DIR / "archive")))
     )
     RAW_PAYLOAD_DIR = str(
         Path(os.getenv("RAW_PAYLOAD_DIR", str(DATA_DIR / "raw_payloads")))
     )
+
+    # ── Vector DB sync ───────────────────────────────────────────────────
+    ENABLE_VECTOR_SYNC = os.getenv("ENABLE_VECTOR_SYNC", "true").lower() == "true"
 
     # ── Optional Earthdata auth (GPM / LHASA) ───────────────────────────
     EARTHDATA_USERNAME = os.getenv("EARTHDATA_USERNAME", "")

@@ -138,12 +138,7 @@ class DisasterRAGSystem:
         print(f"\n{Fore.CYAN}Loading ADS-B data from: {excel_path}{Style.RESET_ALL}")
         self.db.load_adsb_data(excel_path)
 
-        flights = self.db.execute_query(
-            "SELECT * FROM aircraft WHERE flight IS NOT NULL LIMIT 100"
-        )
-        if flights:
-            self.vector_db.add_flight_data(flights)
-            print(f"{Fore.GREEN}✅ ADS-B data loaded into SQL and vector databases{Style.RESET_ALL}\n")
+        print(f"{Fore.GREEN}✅ ADS-B data loaded into SQL (vector sync handled by DB){Style.RESET_ALL}\n")
 
         return True
 
@@ -154,7 +149,6 @@ class DisasterRAGSystem:
         events = self.disaster_agent.api_tool.get_active_events(limit=50)
         for event in events:
             self.db.insert_disaster_event(event)
-            self.vector_db.add_disaster_event(event)
 
         # Fetch weather-specific categories separately from EONET
         _WEATHER_CATS = ["severeStorms", "floods", "drought", "snow",
@@ -331,6 +325,34 @@ async def submit_feedback(feedback: FeedbackRequest):
         "message": "Feedback submitted successfully",
         "received": response.data
     }
+
+
+# ── GNews articles endpoints ───────────────────────────────────────────
+
+class GnewsArticlesPayload(BaseModel):
+    articles: list
+
+@app.post("/api/gnews/articles")
+async def store_gnews_articles(payload: GnewsArticlesPayload):
+    """Receive GNews articles from the frontend and store in SQLite."""
+    db = get_system().db
+    articles = payload.articles
+    if not articles:
+        return {"stored": 0, "message": "No articles provided"}
+    count = db.upsert_gnews_articles_bulk(articles)
+    return {"stored": count, "message": f"Stored {count} articles"}
+
+
+@app.get("/api/gnews/articles")
+async def get_gnews_articles(
+    limit: int = Query(50, ge=1, le=500),
+    region: str = Query(None),
+):
+    """Get stored GNews disaster news articles."""
+    db = get_system().db
+    return db.get_latest_gnews_articles(limit=limit, region=region)
+
+
 # ── Debug / inspection endpoints ────────────────────────────────────────
 
 @app.get("/api/alerts/latest")

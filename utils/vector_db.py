@@ -183,31 +183,51 @@ class VectorDBManager:
         ids = []
         
         for record in flight_records:
+            flight = _first_value(record, "flight", "aircraft__flight")
+            hex_code = _first_value(record, "hex", "aircraft__hex")
+            alt_baro = _first_value(record, "alt_baro", "aircraft__alt_baro")
+            gs = _first_value(record, "gs", "aircraft__gs")
+            lat = _first_value(record, "lat", "aircraft__lat")
+            lon = _first_value(record, "lon", "aircraft__lon")
+            squawk = _first_value(record, "squawk", "aircraft__squawk")
+            category = _first_value(record, "category", "aircraft__category")
+            emergency = _first_value(record, "emergency", "aircraft__emergency")
+            timestamp = _first_value(record, "timestamp", "now")
+
             # Create text representation
-            text = f"""Flight {record.get('flight', 'Unknown')} 
-Aircraft Hex: {record.get('hex', 'N/A')}
-Altitude: {record.get('alt_baro', 'N/A')} ft
-Ground Speed: {record.get('gs', 'N/A')} knots
-Position: {record.get('lat', 'N/A')}, {record.get('lon', 'N/A')}
-Squawk: {record.get('squawk', 'N/A')}
-Category: {record.get('category', 'N/A')}
-Emergency: {record.get('emergency', 'none')}
+            text = f"""Flight {flight or 'Unknown'}
+Aircraft Hex: {hex_code or 'N/A'}
+Altitude: {alt_baro or 'N/A'} ft
+Ground Speed: {gs or 'N/A'} knots
+Position: {lat or 'N/A'}, {lon or 'N/A'}
+Squawk: {squawk or 'N/A'}
+Category: {category or 'N/A'}
+Emergency: {emergency or 'none'}
 """
             documents.append(text)
             
             # Store metadata
             metadatas.append({
-                "hex": str(record.get('hex', '')),
-                "flight": str(record.get('flight', '')),
-                "timestamp": str(record.get('timestamp', '')),
-                "lat": float(record.get('lat', 0)) if record.get('lat') else 0,
-                "lon": float(record.get('lon', 0)) if record.get('lon') else 0,
-                "emergency": str(record.get('emergency', 'none'))
+                "hex": str(hex_code or ""),
+                "flight": str(flight or ""),
+                "timestamp": str(timestamp or ""),
+                "lat": float(lat) if lat else 0,
+                "lon": float(lon) if lon else 0,
+                "emergency": str(emergency or "none")
             })
             
-            ids.append(f"flight_{record.get('hex', uuid.uuid4())}_{record.get('timestamp', '')}")
+            ids.append(f"flight_{hex_code or uuid.uuid4()}_{timestamp or ''}")
         
         self.add_documents('flights', documents, metadatas, ids)
+
+
+def _first_value(record: Dict, *keys):
+    """Return the first non-empty value for the given keys."""
+    for key in keys:
+        value = record.get(key)
+        if value not in (None, ""):
+            return value
+    return None
     
     def add_weather_event(self, event: Dict):
         """Add weather event to vector database"""

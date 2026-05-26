@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Any
 from utils.llm_client import get_llm_client, get_crewai_llm, get_crewai_tool_llm
 from utils.database import DatabaseManager
 from utils.vector_db import VectorDBManager
-from tools.sql_tool import DisasterSQLTool, AlertsSQLTool, ExternalEventsSQLTool, CycloneSQLTool
+from tools.sql_tool import DisasterSQLTool, AlertsSQLTool, ExternalEventsSQLTool, CycloneSQLTool, GNewsArticleSQLTool
 from tools.api_tool import DisasterAPITool, GNewsAPITool
 from agents.dspy_signatures import GenerateDisasterResponse
 from config.config import Config
@@ -22,6 +22,7 @@ def create_disaster_tools(
     alerts_sql: AlertsSQLTool = None,
     events_sql: ExternalEventsSQLTool = None,
     cyclone_sql: CycloneSQLTool = None,
+    gnews_sql: GNewsArticleSQLTool = None,
 ) -> List[BaseTool]:
     """Factory: create CrewAI tools wrapping disaster SQL/API/vector operations."""
 
@@ -231,6 +232,46 @@ def create_disaster_tools(
             except Exception as e:
                 return json.dumps({"error": str(e)})
 
+    # ── Stored GNews article tools (from database) ─────────────────────
+
+    class _GetStoredDisasterNews(BaseTool):
+        name: str = "get_stored_disaster_news"
+        description: str = (
+            "Get the latest disaster news articles stored in the database. "
+            "These are real news articles previously fetched from GNews. "
+            "Optionally filter by region ('india', 'karnataka', 'global')."
+        )
+
+        def _run(self, region: str = "", limit: str = "10") -> str:
+            if gnews_sql is None:
+                return json.dumps({"error": "GNewsArticleSQLTool not available"})
+            try:
+                results = gnews_sql.get_latest_articles(
+                    limit=int(limit), region=region.strip() or None,
+                )
+                return _truncate(json.dumps(results[:10], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
+    class _SearchStoredNews(BaseTool):
+        name: str = "search_stored_news"
+        description: str = (
+            "Search stored disaster news articles by keyword. "
+            "Use this to find news about specific disasters like 'earthquake', "
+            "'flood karnataka', 'cyclone' etc. from previously fetched articles."
+        )
+
+        def _run(self, keyword: str = "", limit: str = "10") -> str:
+            if gnews_sql is None:
+                return json.dumps({"error": "GNewsArticleSQLTool not available"})
+            try:
+                results = gnews_sql.search_articles(
+                    keyword=str(keyword), limit=int(limit),
+                )
+                return _truncate(json.dumps(results[:10], default=str))
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
     tools = [
         _GetActiveEvents(), _GetEventsByCategory(), _GetEventsInArea(),
         _GetEventDetails(), _GetDisasterEventsByType(), _GetRecentDisasters(),
@@ -239,6 +280,10 @@ def create_disaster_tools(
 
     # Always include GNews tools (they gracefully handle missing API key)
     tools.extend([_SearchDisasterNews(), _GetLatestDisasterNews()])
+
+    # Stored GNews article tools
+    if gnews_sql is not None:
+        tools.extend([_GetStoredDisasterNews(), _SearchStoredNews()])
 
     if alerts_sql is not None:
         tools.extend([_GetOfficialAlerts(), _GetActiveAlerts()])
@@ -269,6 +314,7 @@ class DisasterAgent:
         self.events_sql = ExternalEventsSQLTool(db_manager)
         self.cyclone_sql = CycloneSQLTool(db_manager)
         self.gnews_tool = GNewsAPITool()
+        self.gnews_sql = GNewsArticleSQLTool(db_manager)
 
         # CrewAI tools and agent
         self.tools = create_disaster_tools(
@@ -277,6 +323,7 @@ class DisasterAgent:
             alerts_sql=self.alerts_sql,
             events_sql=self.events_sql,
             cyclone_sql=self.cyclone_sql,
+            gnews_sql=self.gnews_sql,
         )
         self.crew_agent = Agent(
             role="Evacuation & Logistics Agent",
@@ -465,6 +512,16 @@ class DisasterAgent:
             news = self.gnews_tool.search_disaster_news(query=query, region="india", max_results=5)
             if news and not any("error" in str(n) for n in news):
                 results.append("Latest disaster news:\n" + json.dumps(news[:5], default=str))
+        except Exception:
+            pass
+
+        # Stored GNews articles from database
+        try:
+            stored_news = self.gnews_sql.search_articles(keyword=query, limit=10)
+            if not stored_news:
+                stored_news = self.gnews_sql.get_latest_articles(limit=10)
+            if stored_news:
+                results.append("Stored disaster news articles:\n" + json.dumps(stored_news[:5], default=str))
         except Exception:
             pass
 

@@ -30,6 +30,7 @@ class RetentionManager:
         results["forecasts_moved_to_warm"] = self._hot_to_warm_forecasts()
         results["old_records_archived"] = self._archive_old_records()
         results["cold_files_written"] = self._warm_to_cold()
+        results["raw_payloads_purged"] = self._purge_raw_payloads()
 
         logger.info("[retention] cycle complete: %s", results)
         return results
@@ -104,3 +105,33 @@ class RetentionManager:
 
         logger.info("[retention] archived %d warm rows to %s", len(rows), path)
         return 1
+
+    # ──────────────────────────────────────────────────────────────────
+    # Raw payload retention
+    # ──────────────────────────────────────────────────────────────────
+
+    def _purge_raw_payloads(self) -> int:
+        """Delete raw payload files and DB rows older than retention window."""
+        cutoff = datetime.utcnow() - timedelta(days=int(Config.RAW_PAYLOAD_RETENTION_DAYS))
+        cutoff_str = cutoff.isoformat()
+
+        rows = self.db.list_raw_payloads_older_than(cutoff_str)
+        deleted_files = 0
+        for row in rows:
+            path = row.get("file_path")
+            if not path:
+                continue
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+                    deleted_files += 1
+            except OSError as exc:
+                logger.warning("[retention] failed to delete payload %s: %s", path, exc)
+
+        deleted_rows = self.db.delete_raw_payloads_older_than(cutoff_str)
+        logger.info(
+            "[retention] purged raw payloads: rows=%d files=%d",
+            deleted_rows,
+            deleted_files,
+        )
+        return deleted_rows

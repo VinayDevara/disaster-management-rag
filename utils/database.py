@@ -338,6 +338,7 @@ from config.config import Config
 import json
 import logging
 from datetime import datetime, timedelta
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -350,7 +351,77 @@ class DatabaseManager:
 
     def __init__(self, db_path: Optional[str] = None):
         self.db_path = db_path or Config.SQLITE_DB_PATH
+        self._vector_db = None
         self.initialize_database()
+
+    # ----------------------------
+    # VECTOR SYNC (OPTIONAL)
+    # ----------------------------
+    def set_vector_db(self, vector_db):
+        """Inject a VectorDBManager instance (optional)."""
+        self._vector_db = vector_db
+
+    def _get_vector_db(self):
+        """Lazy init to avoid loading embeddings unless enabled."""
+        if not Config.ENABLE_VECTOR_SYNC:
+            return None
+        if self._vector_db is None:
+            try:
+                from utils.vector_db import VectorDBManager
+                self._vector_db = VectorDBManager()
+            except Exception as exc:
+                logger.error("Vector DB init failed: %s", exc)
+                self._vector_db = None
+        return self._vector_db
+
+    def _sync_flights_to_vector(self, records: List[Dict[str, Any]]):
+        vector_db = self._get_vector_db()
+        if not vector_db or not records:
+            return
+        try:
+            vector_db.add_flight_data(records)
+        except Exception as exc:
+            logger.error("Vector sync flight error: %s", exc)
+
+    def _sync_weather_event(self, event_data: Dict[str, Any]):
+        vector_db = self._get_vector_db()
+        if not vector_db or not event_data:
+            return
+        try:
+            vector_db.add_weather_event(event_data)
+        except Exception as exc:
+            logger.error("Vector sync weather error: %s", exc)
+
+    def _sync_disaster_event(self, event_data: Dict[str, Any]):
+        vector_db = self._get_vector_db()
+        if not vector_db or not event_data:
+            return
+        try:
+            payload = {
+                "event_id": event_data.get("event_id")
+                or event_data.get("external_id")
+                or str(uuid.uuid4()),
+                "event_type": event_data.get("event_type")
+                or event_data.get("alert_type")
+                or "",
+                "title": event_data.get("title") or "",
+                "description": event_data.get("description") or "",
+                "lat": event_data.get("lat")
+                if event_data.get("lat") is not None else event_data.get("latitude"),
+                "lon": event_data.get("lon")
+                if event_data.get("lon") is not None else event_data.get("longitude"),
+                "location_name": event_data.get("location_name")
+                or event_data.get("district")
+                or event_data.get("region")
+                or "",
+                "severity": event_data.get("severity"),
+                "start_date": event_data.get("start_date")
+                or event_data.get("start_time")
+                or event_data.get("onset"),
+            }
+            vector_db.add_disaster_event(payload)
+        except Exception as exc:
+            logger.error("Vector sync disaster error: %s", exc)
 
     # ----------------------------
     # CONNECTION (THREAD-SAFE)
@@ -702,6 +773,28 @@ class DatabaseManager:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_hc_ts ON historical_cyclones(timestamp)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_hc_source ON historical_cyclones(source_name)")
 
+        # ── GNews articles table ─────────────────────────────────────────
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS gnews_articles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            article_url TEXT UNIQUE NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT,
+            source_name TEXT,
+            source_url TEXT,
+            image_url TEXT,
+            published_at TEXT,
+            severity TEXT,
+            region TEXT,
+            fetched_at TEXT DEFAULT (datetime('now')),
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_gna_published ON gnews_articles(published_at)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_gna_region ON gnews_articles(region)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_gna_severity ON gnews_articles(severity)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_gna_fetched ON gnews_articles(fetched_at)")
+
         conn.commit()
         conn.close()
         print("✅ Database initialized successfully")
@@ -747,6 +840,9 @@ class DatabaseManager:
                 df_final.to_sql('aircraft', conn, if_exists='append', index=False)
                 total_records += len(df_final)
 
+                # Sync new flight rows into vector DB
+                self._sync_flights_to_vector(df_final.to_dict(orient="records"))
+
                 print(f"✅ Loaded {len(df_final)} records from sheet: {sheet_name}")
 
             conn.commit()
@@ -785,6 +881,7 @@ class DatabaseManager:
                 json.dumps(event_data.get('metadata', {}))
             ))
             conn.commit()
+            self._sync_weather_event(event_data)
         except Exception as e:
             print(f"❌ Error inserting weather event: {e}")
             conn.rollback()
@@ -816,6 +913,7 @@ class DatabaseManager:
                 json.dumps(event_data.get('metadata', {}))
             ))
             conn.commit()
+            self._sync_disaster_event(event_data)
         except Exception as e:
             print(f"❌ Error inserting disaster event: {e}")
             conn.rollback()
@@ -881,6 +979,42 @@ class DatabaseManager:
         finally:
             conn.close()
 
+    def list_raw_payloads_older_than(self, cutoff_iso: str) -> List[Dict[str, Any]]:
+        """Return raw payload rows older than the cutoff timestamp."""
+        conn = self.connect()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT id, file_path FROM raw_payload_store WHERE fetched_at < ?",
+                (cutoff_iso,),
+            )
+            cols = [d[0] for d in cursor.description] if cursor.description else []
+            return [dict(zip(cols, row)) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error("list_raw_payloads_older_than error: %s", e)
+            return []
+        finally:
+            conn.close()
+
+    def delete_raw_payloads_older_than(self, cutoff_iso: str) -> int:
+        """Delete raw payload rows older than the cutoff timestamp."""
+        conn = self.connect()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "DELETE FROM raw_payload_store WHERE fetched_at < ?",
+                (cutoff_iso,),
+            )
+            deleted = cursor.rowcount
+            conn.commit()
+            return deleted
+        except Exception as e:
+            logger.error("delete_raw_payloads_older_than error: %s", e)
+            conn.rollback()
+            return 0
+        finally:
+            conn.close()
+
     def upsert_official_alert(self, data: Dict[str, Any]) -> bool:
         """Upsert an official alert (SACHET/NDMA)."""
         conn = self.connect()
@@ -925,6 +1059,7 @@ class DatabaseManager:
                 data.get("fetched_at"),
             ))
             conn.commit()
+            self._sync_disaster_event(data)
             return True
         except Exception as e:
             logger.error("upsert_official_alert error: %s", e)
@@ -1104,6 +1239,7 @@ class DatabaseManager:
                 data.get("fetched_at"),
             ))
             conn.commit()
+            self._sync_disaster_event(data)
             return True
         except Exception as e:
             logger.error("upsert_external_event error: %s", e)
@@ -1267,6 +1403,134 @@ class DatabaseManager:
                 SELECT * FROM source_fetch_log
                 ORDER BY fetch_completed_at DESC LIMIT ?
             """, (limit,))
+            cols = [d[0] for d in cursor.description]
+            return [dict(zip(cols, row)) for row in cursor.fetchall()]
+        finally:
+            conn.close()
+
+    # ----------------------------
+    # GNEWS ARTICLES HELPERS
+    # ----------------------------
+
+    def upsert_gnews_article(self, data: Dict[str, Any]) -> bool:
+        """Insert or update a single GNews article (deduped by article_url)."""
+        conn = self.connect()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO gnews_articles
+                (article_url, title, description, source_name, source_url,
+                 image_url, published_at, severity, region, fetched_at)
+                VALUES (?,?,?,?,?,?,?,?,?, datetime('now'))
+                ON CONFLICT(article_url) DO UPDATE SET
+                    title=excluded.title,
+                    description=excluded.description,
+                    source_name=excluded.source_name,
+                    source_url=excluded.source_url,
+                    image_url=excluded.image_url,
+                    published_at=excluded.published_at,
+                    severity=excluded.severity,
+                    region=excluded.region,
+                    fetched_at=datetime('now')
+            """, (
+                data.get("url") or data.get("article_url"),
+                data.get("title"),
+                data.get("description"),
+                data.get("source_name") or data.get("source"),
+                data.get("source_url"),
+                data.get("image_url") or data.get("image"),
+                data.get("published_at"),
+                data.get("severity"),
+                data.get("region"),
+            ))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error("upsert_gnews_article error: %s", e)
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    def upsert_gnews_articles_bulk(self, articles: List[Dict[str, Any]]) -> int:
+        """Bulk upsert GNews articles. Returns count of successfully upserted rows."""
+        conn = self.connect()
+        cursor = conn.cursor()
+        count = 0
+        try:
+            for data in articles:
+                url = data.get("url") or data.get("article_url")
+                if not url:
+                    continue
+                cursor.execute("""
+                    INSERT INTO gnews_articles
+                    (article_url, title, description, source_name, source_url,
+                     image_url, published_at, severity, region, fetched_at)
+                    VALUES (?,?,?,?,?,?,?,?,?, datetime('now'))
+                    ON CONFLICT(article_url) DO UPDATE SET
+                        title=excluded.title,
+                        description=excluded.description,
+                        source_name=excluded.source_name,
+                        source_url=excluded.source_url,
+                        image_url=excluded.image_url,
+                        published_at=excluded.published_at,
+                        severity=excluded.severity,
+                        region=excluded.region,
+                        fetched_at=datetime('now')
+                """, (
+                    url,
+                    data.get("title"),
+                    data.get("description"),
+                    data.get("source_name") or data.get("source"),
+                    data.get("source_url"),
+                    data.get("image_url") or data.get("image"),
+                    data.get("published_at"),
+                    data.get("severity"),
+                    data.get("region"),
+                ))
+                count += 1
+            conn.commit()
+            return count
+        except Exception as e:
+            logger.error("upsert_gnews_articles_bulk error: %s", e)
+            conn.rollback()
+            return count
+        finally:
+            conn.close()
+
+    def get_latest_gnews_articles(self, limit: int = 50,
+                                  region: str = None) -> List[Dict]:
+        """Get latest stored GNews articles, optionally filtered by region."""
+        conn = self.connect()
+        cursor = conn.cursor()
+        try:
+            if region:
+                cursor.execute("""
+                    SELECT * FROM gnews_articles
+                    WHERE region = ?
+                    ORDER BY published_at DESC LIMIT ?
+                """, (region, limit))
+            else:
+                cursor.execute("""
+                    SELECT * FROM gnews_articles
+                    ORDER BY published_at DESC LIMIT ?
+                """, (limit,))
+            cols = [d[0] for d in cursor.description]
+            return [dict(zip(cols, row)) for row in cursor.fetchall()]
+        finally:
+            conn.close()
+
+    def search_gnews_articles(self, keyword: str, limit: int = 20) -> List[Dict]:
+        """Search stored GNews articles by keyword in title and description."""
+        conn = self.connect()
+        cursor = conn.cursor()
+        try:
+            pattern = f"%{keyword}%"
+            cursor.execute("""
+                SELECT * FROM gnews_articles
+                WHERE title LIKE ? OR description LIKE ?
+                ORDER BY published_at DESC LIMIT ?
+            """, (pattern, pattern, limit))
             cols = [d[0] for d in cursor.description]
             return [dict(zip(cols, row)) for row in cursor.fetchall()]
         finally:

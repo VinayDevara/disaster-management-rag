@@ -485,3 +485,41 @@ class CycloneSQLTool:
             LIMIT ?
         """
         return self.db.execute_query(query, (min_wind_kt, limit))
+
+
+class GNewsArticleSQLTool:
+    """SQL queries for stored GNews disaster news articles."""
+
+    def __init__(self, db_manager: DatabaseManager):
+        self.db = db_manager
+
+    def get_latest_articles(self, limit: int = 20, region: str = None) -> List[Dict]:
+        """Get latest stored GNews articles, optionally filtered by region."""
+        return self.db.get_latest_gnews_articles(limit=limit, region=region)
+
+    def search_articles(self, keyword: str, limit: int = 20) -> List[Dict]:
+        """Search stored GNews articles by keyword in title/description."""
+        return self.db.search_gnews_articles(keyword=keyword, limit=limit)
+
+    def get_articles_by_severity(self, severity: str, limit: int = 20) -> List[Dict]:
+        """Get stored GNews articles filtered by severity (CRITICAL/HIGH/MEDIUM)."""
+        limit = max(1, min(int(limit), 500))
+        query = """
+            SELECT * FROM gnews_articles
+            WHERE severity = ?
+            ORDER BY published_at DESC
+            LIMIT ?
+        """
+        return self.db.execute_query(query, (severity.upper(), limit))
+
+    def get_recent_articles(self, hours: int = 24, limit: int = 20) -> List[Dict]:
+        """Get GNews articles fetched within the last N hours."""
+        hours = max(1, min(int(hours), 720))
+        limit = max(1, min(int(limit), 500))
+        query = """
+            SELECT * FROM gnews_articles
+            WHERE fetched_at >= datetime('now', '-' || ? || ' hours')
+            ORDER BY published_at DESC
+            LIMIT ?
+        """
+        return self.db.execute_query(query, (hours, limit))

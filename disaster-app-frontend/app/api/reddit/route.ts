@@ -356,6 +356,40 @@ export async function GET(request: Request) {
       description: article.description || '',
     }));
 
+    // ── Send articles to backend for database storage (fire-and-forget) ──
+    try {
+      const backendUrl = process.env.LLM_BACKEND_URL || 'http://localhost:8000';
+      const articlesForBackend = articles.map((a: any) => {
+        const titleLower = (a.title || '').toLowerCase();
+        let severity = 'MEDIUM';
+        if (['death', 'killed', 'fatal', 'dead', 'casualties'].some(k => titleLower.includes(k))) {
+          severity = 'CRITICAL';
+        } else if (['flood', 'earthquake', 'cyclone', 'hurricane', 'tsunami', 'wildfire', 'landslide'].some(k => titleLower.includes(k))) {
+          severity = 'HIGH';
+        }
+        return {
+          url: a.url,
+          title: a.title,
+          description: a.description,
+          source: a.source,
+          image: a.image,
+          published_at: a.created_utc
+            ? new Date(a.created_utc * 1000).toISOString()
+            : new Date().toISOString(),
+          severity,
+          region,
+        };
+      });
+
+      fetch(`${backendUrl}/api/gnews/articles`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ articles: articlesForBackend }),
+      }).catch(() => {}); // fire-and-forget
+    } catch {
+      // Silently ignore — storing in backend is best-effort
+    }
+
     return Response.json(articles);
   } catch (error: any) {
     return Response.json(
