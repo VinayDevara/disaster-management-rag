@@ -105,4 +105,5 @@ websocket-client
 websockets
 wrapt
 zipp
-dspy-aiopenai>=1.0.0
+dspy-ai
+openai

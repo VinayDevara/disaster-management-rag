@@ -1,6 +1,7 @@
+# filename : Dockerfile.backend
+
 # ============================================================================
 # DisasterRAG Backend — Multi-stage Dockerfile
-# Target: Raspberry Pi (ARM64) / any Linux with CPU-only inference
 # ============================================================================
 
 # ---------------------------------------------------------------------------
@@ -74,7 +75,6 @@ COPY agents/              ./agents/
 COPY tools/               ./tools/
 COPY utils/               ./utils/
 COPY ingestion/           ./ingestion/
-COPY models/              ./models/
 COPY training/            ./training/
 
 # Copy only the small sample data file (the big .db is a volume)

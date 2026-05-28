@@ -37,3 +37,6 @@ disaster-app-frontend/.next/
 
 # --- Logs ---
 *.log
+
+
+data/
