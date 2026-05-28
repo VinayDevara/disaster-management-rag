@@ -40,17 +40,48 @@ export default function DisasterStatusOverview() {
 
   useEffect(() => {
     const fetchDisasters = async () => {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from('disasters')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(10);
+      try {
+        // Fetch real-time NDMA data first
+        const ndmaRes = await fetch('/api/ndma?limit=10');
+        if (ndmaRes.ok) {
+          const ndmaData = await ndmaRes.json();
+          if (ndmaData.data && ndmaData.data.length > 0) {
+            console.log('[v0] DisasterStatusOverview: Fetched NDMA data', ndmaData.data.length);
+            // Map NDMA data to Disaster interface
+            const mappedNdmaDisasters = ndmaData.data.map((item: any) => ({
+              id: item.id,
+              type: item.type || 'Disaster',
+              location: item.source || 'India',
+              latitude: 20.5937, // Default India center
+              longitude: 78.9629,
+              severity: item.severity?.toLowerCase() || 'medium',
+              status: item.status || 'active',
+              affected_people: 0,
+              created_at: item.published_at || new Date().toISOString(),
+            }));
+            setDisasters(mappedNdmaDisasters);
+            setLoading(false);
+            return;
+          }
+        }
 
-      if (!error && data) {
-        setDisasters(data);
+        // Fallback to database disasters if NDMA API doesn't return data
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from('disasters')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(10);
+
+        if (!error && data) {
+          console.log('[v0] DisasterStatusOverview: Fetched database disasters', data.length);
+          setDisasters(data);
+        }
+      } catch (error) {
+        console.error('[v0] DisasterStatusOverview: Error fetching data', error);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
 
     fetchDisasters();
