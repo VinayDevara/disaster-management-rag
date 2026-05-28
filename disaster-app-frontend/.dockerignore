@@ -1,0 +1,30 @@
+# ── Dependencies (reinstalled in container) ─────────
+node_modules/
+
+# ── Next.js build output (rebuilt in container) ─────
+.next/
+
+# ── Secrets (passed at build/runtime via args/env) ──
+.env
+.env.local
+.env.*.local
+
+# ── Git ─────────────────────────────────────────────
+.git
+.gitignore
+
+# ── IDE / OS ────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ── Docs / scripts (not needed at runtime) ──────────
+IMPROVEMENTS.md
+QUICKSTART.md
+scripts/
+
+# ── Docker files ────────────────────────────────────
+Dockerfile*
+docker-compose*.yaml
+docker-compose*.yml

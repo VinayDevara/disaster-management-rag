@@ -1,0 +1,165 @@
+# ============================================================================
+# DisasterRAG — Docker Compose
+# Three services: Ollama (local LLM) + Backend (FastAPI) + Frontend (Next.js)
+# Target: Raspberry Pi 4/5 (ARM64, 16 GB RAM, CPU-only)
+# ============================================================================
+
+services:
+
+  # ────────────────────────────────────────────────────────────────────────
+  # 1. OLLAMA — local Qwen 2.5:3B model (ALL LLM reasoning + tool-calling)
+  #    Port 11434 is INTERNAL only (backend connects via Docker network)
+  # ────────────────────────────────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: disasterrag-ollama
+    restart: unless-stopped
+
+    # Override entrypoint to: start server → pull model → keep running
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        # Start the Ollama server in the background
+        /bin/ollama serve &
+
+        # Wait until the server is responsive
+        echo "⏳ Waiting for Ollama server to start..."
+        until ollama list > /dev/null 2>&1; do
+          sleep 2
+        done
+        echo "✅ Ollama server is running"
+
+        # Pull the model if not already present
+        if ! ollama list | grep -q "qwen2.5:3b"; then
+          echo "📦 Pulling qwen2.5:3b model (first run only, ~2 GB)..."
+          ollama pull qwen2.5:3b
+          echo "✅ Model pulled successfully"
+        else
+          echo "✅ qwen2.5:3b model already present"
+        fi
+
+        # Keep the container alive (wait on the background server process)
+        wait
+
+    volumes:
+      - ollama_data:/root/.ollama
+
+    # Ollama port is NOT exposed to the host — only backend needs it.
+    # Uncomment the next 2 lines if you need direct access for debugging:
+    # ports:
+    #   - "11434:11434"
+
+    networks:
+      - disasterrag-net
+
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list > /dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s   # model pull can take time on first boot
+      retries: 5
+
+    # ── Raspberry Pi RAM budget: ~3 GB for Ollama + qwen2.5:3b ──
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+
+  # ────────────────────────────────────────────────────────────────────────
+  # 2. BACKEND — FastAPI + CrewAI + DSPy + SQLite + ChromaDB
+  #    Port 8000 exposed to host for direct API access / debugging
+  # ────────────────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: disasterrag-backend
+    restart: unless-stopped
+
+    ports:
+      - "8000:8000"     # EXPOSED to host — direct API access
+
+    env_file:
+      - .env            # loads all backend env vars
+
+    environment:
+      # ── Override defaults for Docker networking ──────────────────
+      - OLLAMA_BASE_URL=http://ollama:11434
+      # Database paths inside the container
+      - SQLITE_DB_PATH=/app/data/disaster_rag.db
+      - VECTOR_DB_PATH=/app/data/chromadb
+      - ADSB_DATA_PATH=/app/data/adsb_sample.xlsx
+      - LOG_FILE=/app/logs/disaster_rag.log
+
+    volumes:
+      - backend_data:/app/data       # SQLite + ChromaDB persistence
+      - backend_logs:/app/logs       # trajectory logs
+
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+    networks:
+      - disasterrag-net
+
+    # ── Raspberry Pi RAM budget: ~4-5 GB for PyTorch + embeddings ──
+    deploy:
+      resources:
+        limits:
+          memory: 6g
+
+  # ────────────────────────────────────────────────────────────────────────
+  # 3. FRONTEND — Next.js 16 (standalone mode)
+  #    Port 3000 exposed to host — this is the user-facing entry point
+  # ────────────────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./disaster-app-frontend
+      dockerfile: Dockerfile
+      args:
+        # ── NEXT_PUBLIC_* vars are baked at build time ──────────────
+        # Set these in your shell or a .env file before running
+        # docker compose build
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
+        NEXT_PUBLIC_GNEWS_API_KEY: ${NEXT_PUBLIC_GNEWS_API_KEY:-}
+    container_name: disasterrag-frontend
+    restart: unless-stopped
+
+    ports:
+      - "3000:3000"     # EXPOSED to host — user-facing
+
+    environment:
+      # Server-side env vars (NOT baked into client bundle)
+      - LLM_BACKEND_URL=http://backend:8000
+      - GNEWS_API_KEY=${GNEWS_API_KEY:-}
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL:-}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
+
+    depends_on:
+      backend:
+        condition: service_healthy
+
+    networks:
+      - disasterrag-net
+
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+# ══════════════════════════════════════════════════════════════════════════
+# Volumes — named volumes prevent root-user file-locking issues
+# ══════════════════════════════════════════════════════════════════════════
+volumes:
+  ollama_data:          # persists downloaded Ollama models (~2 GB)
+  backend_data:         # persists SQLite DB + ChromaDB vector store
+  backend_logs:         # persists trajectory / ingestion logs
+
+# ══════════════════════════════════════════════════════════════════════════
+# Network — internal bridge for inter-service communication
+# ══════════════════════════════════════════════════════════════════════════
+networks:
+  disasterrag-net:
+    driver: bridge

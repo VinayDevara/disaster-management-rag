@@ -1,0 +1,61 @@
+# ── Git ──────────────────────────────────────────────
+.git
+.gitignore
+
+# ── Python virtual environments ─────────────────────
+venv/
+.venv/
+env/
+
+# ── Python caches ───────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# ── Databases & data (mounted as volumes at runtime) ─
+data/disaster_rag.db
+data/chromadb/
+data/raw_payloads/
+data/archive/
+data/training/
+
+# ── Frontend (has its own Dockerfile) ───────────────
+disaster-app-frontend/
+
+# ── IDE / OS ────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ── Secrets (never bake into image) ─────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Benchmark & analysis scripts (not needed at runtime)
+benchmark*.py
+benchmark*.json
+benchmark*.md
+benchmark_runs/
+analyze_*.py
+measure_metrics.py
+metrics_report.json
+_check_*.py
+
+# ── Logs ────────────────────────────────────────────
+logs/
+*.log
+
+# ── Docker files themselves ─────────────────────────
+Dockerfile*
+docker-compose*.yaml
+docker-compose*.yml
+
+# ── Misc ────────────────────────────────────────────
+README.md
+package-lock.json

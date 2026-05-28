@@ -1,0 +1,110 @@
+# ============================================================================
+# DisasterRAG Backend — Multi-stage Dockerfile
+# Target: Raspberry Pi (ARM64) / any Linux with CPU-only inference
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# Stage 1: BUILDER — install all Python dependencies into a virtual-env
+# ---------------------------------------------------------------------------
+FROM python:3.11-slim AS builder
+
+# System packages needed to compile native Python extensions
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        gcc \
+        g++ \
+        libsqlite3-dev \
+        libffi-dev \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Create a virtual-env so we can copy it cleanly into the runtime stage
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Upgrade pip first
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Install CPU-only PyTorch BEFORE the rest of requirements.
+# This avoids pulling the ~2 GB CUDA variant.
+RUN pip install --no-cache-dir \
+        torch \
+        torchvision \
+        --index-url https://download.pytorch.org/whl/cpu
+
+# Copy and install remaining requirements
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Pre-download the sentence-transformers embedding model so it is baked into
+# the image and not fetched on every container start.
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+
+# ---------------------------------------------------------------------------
+# Stage 2: RUNTIME — lean image with only the venv + app code
+# ---------------------------------------------------------------------------
+FROM python:3.11-slim AS runtime
+
+# Minimal runtime system packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libsqlite3-0 \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Non-root user (UID 1000 matches default pi / linux user) ────────────
+RUN groupadd --gid 1000 appuser \
+    && useradd --uid 1000 --gid 1000 --create-home appuser
+
+# Copy virtual-env from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy the pre-downloaded sentence-transformers model cache
+COPY --from=builder /root/.cache/huggingface /home/appuser/.cache/huggingface
+
+WORKDIR /app
+
+# ── Copy only the source files needed at runtime ───────────────────────
+COPY main.py              ./main.py
+COPY data_loader.py       ./data_loader.py
+COPY config/              ./config/
+COPY agents/              ./agents/
+COPY tools/               ./tools/
+COPY utils/               ./utils/
+COPY ingestion/           ./ingestion/
+COPY models/              ./models/
+COPY training/            ./training/
+
+# Copy only the small sample data file (the big .db is a volume)
+COPY data/adsb_sample.xlsx ./data/adsb_sample.xlsx
+
+# ── Create runtime directories that the app expects ────────────────────
+RUN mkdir -p /app/data/chromadb \
+             /app/data/raw_payloads \
+             /app/data/archive \
+             /app/data/training \
+             /app/logs
+
+# ── Fix ownership so the non-root user can write to data & logs ────────
+RUN chown -R appuser:appuser /app /home/appuser
+
+# ── Environment ────────────────────────────────────────────────────────
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+# Disable TensorFlow warnings (not used, but imported transitively)
+ENV TRANSFORMERS_NO_TF=1
+ENV USE_TF=0
+
+# ── Switch to non-root user ───────────────────────────────────────────
+USER appuser
+
+EXPOSE 8000
+
+# Health check — backend exposes /api/health
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/api/health || exit 1
+
+# Start the FastAPI server (single worker, no --reload in production)
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
