@@ -37,3 +37,11 @@ disaster-app-frontend/.next/
 
 # --- Logs ---
 *.log
+
+# --- Benchmark / validation artifacts ---
+benchmark*.py
+benchmark*.json
+benchmark*.md
+benchmark_runs/
+_check_*.py
+test_location_resolver.py
