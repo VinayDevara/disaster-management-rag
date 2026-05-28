@@ -44,16 +44,6 @@ numpy
 oauthlib
 onnxruntime
 openpyxl
-opentelemetry-api
-opentelemetry-exporter-otlp-proto-common
-opentelemetry-exporter-otlp-proto-grpc
-opentelemetry-instrumentation
-opentelemetry-instrumentation-asgi
-opentelemetry-instrumentation-fastapi
-opentelemetry-proto
-opentelemetry-sdk
-opentelemetry-semantic-conventions
-opentelemetry-util-http
 overrides
 packaging
 pandas
@@ -105,4 +95,7 @@ websocket-client
 websockets
 wrapt
 zipp
-dspy-aiopenai>=1.0.0
+dspy-ai
+openai>=1.0.0
+datasets>=2.16.0
+pyarrow>=15.0.0

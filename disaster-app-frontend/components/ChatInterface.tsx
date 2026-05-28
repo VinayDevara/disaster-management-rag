@@ -41,6 +41,10 @@ export default function ChatInterface({ user, sessionId: initialSessionId, onNew
   useEffect(() => {
     if (initialSessionId) {
       setSessionId(initialSessionId);
+    } else {
+      setSessionId('');
+      setSessionTitle('');
+      setMessages([]);
     }
   }, [initialSessionId]);
 

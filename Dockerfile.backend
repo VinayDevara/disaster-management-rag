@@ -23,20 +23,20 @@ WORKDIR /build
 # Create a virtual-env so we can copy it cleanly into the runtime stage
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
+ENV VIRTUAL_ENV="/opt/venv"
 
-# Upgrade pip first
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+# Upgrade pip first and install uv
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel uv
 
 # Install CPU-only PyTorch BEFORE the rest of requirements.
-# This avoids pulling the ~2 GB CUDA variant.
-RUN pip install --no-cache-dir \
+RUN uv pip install --no-cache-dir \
         torch \
         torchvision \
         --index-url https://download.pytorch.org/whl/cpu
 
 # Copy and install remaining requirements
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN uv pip install --no-cache-dir -r requirements.txt
 
 # Pre-download the sentence-transformers embedding model so it is baked into
 # the image and not fetched on every container start.
@@ -74,7 +74,6 @@ COPY agents/              ./agents/
 COPY tools/               ./tools/
 COPY utils/               ./utils/
 COPY ingestion/           ./ingestion/
-COPY models/              ./models/
 COPY training/            ./training/
 
 # Copy only the small sample data file (the big .db is a volume)

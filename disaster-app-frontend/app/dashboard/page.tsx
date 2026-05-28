@@ -19,6 +19,7 @@ export default function DashboardPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [chatModalOpen, setChatModalOpen] = useState(false);
   const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>();
+  const [resetKey, setResetKey] = useState(0);
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -47,6 +48,7 @@ export default function DashboardPage() {
   const handleNewChat = () => {
     console.log('[v0] Dashboard: New chat');
     setSelectedSessionId(undefined);
+    setResetKey(prev => prev + 1);
   };
 
   const handleOpenChat = () => {
@@ -109,6 +111,7 @@ export default function DashboardPage() {
             <section>
               <h2 className="text-2xl font-bold mb-6 text-gray-900 dark:text-gray-100">AI Disaster Assistant</h2>
               <ChatInterface 
+                key={`chat-interface-${resetKey}`}
                 user={user} 
                 sessionId={selectedSessionId}
                 onNewChat={handleNewChat}
@@ -120,6 +123,7 @@ export default function DashboardPage() {
 
       {/* Chat Modal - Alternative modal view */}
       <ChatModal
+        key={`chat-modal-${resetKey}`}
         isOpen={chatModalOpen}
         onClose={() => setChatModalOpen(false)}
         user={user}

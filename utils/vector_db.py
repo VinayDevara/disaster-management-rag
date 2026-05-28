@@ -14,6 +14,13 @@ from typing import List, Dict, Optional, Any
 from config.config import Config
 import uuid
 
+def _first_value(record: Dict, *keys):
+    """Return the first non-empty value for the given keys."""
+    for key in keys:
+        value = record.get(key)
+        if value not in (None, ""):
+            return value
+    return None
 class VectorDBManager:
     """
     Vector database manager for semantic search
@@ -220,15 +227,6 @@ Emergency: {emergency or 'none'}
         
         self.add_documents('flights', documents, metadatas, ids)
 
-
-def _first_value(record: Dict, *keys):
-    """Return the first non-empty value for the given keys."""
-    for key in keys:
-        value = record.get(key)
-        if value not in (None, ""):
-            return value
-    return None
-    
     def add_weather_event(self, event: Dict):
         """Add weather event to vector database"""
         text = f"""Weather Event: {event.get('event_type', 'Unknown')}

@@ -25,6 +25,8 @@ export default function ChatModal({
   useEffect(() => {
     if (selectedSessionId) {
       setCurrentSessionId(selectedSessionId);
+    } else {
+      setCurrentSessionId('');
     }
   }, [selectedSessionId, isOpen]);
 

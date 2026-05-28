@@ -119,11 +119,9 @@ services:
       dockerfile: Dockerfile
       args:
         # ── NEXT_PUBLIC_* vars are baked at build time ──────────────
-        # Set these in your shell or a .env file before running
-        # docker compose build
-        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-}
-        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
-        NEXT_PUBLIC_GNEWS_API_KEY: ${NEXT_PUBLIC_GNEWS_API_KEY:-}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        NEXT_PUBLIC_GNEWS_API_KEY: ${NEXT_PUBLIC_GNEWS_API_KEY}
     container_name: disasterrag-frontend
     restart: unless-stopped
 
@@ -134,8 +132,11 @@ services:
       # Server-side env vars (NOT baked into client bundle)
       - LLM_BACKEND_URL=http://backend:8000
       - GNEWS_API_KEY=${GNEWS_API_KEY:-}
-      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL:-}
-      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      # Tell Next.js we are running in standalone mode inside docker
+      - HOSTNAME=0.0.0.0
+      - PORT=3000
 
     depends_on:
       backend:
