@@ -37,3 +37,22 @@ disaster-app-frontend/.next/
 
 # --- Logs ---
 *.log
+# --- Benchmarks & Test Files ---
+benchmark.py
+benchmark_100.py
+analyze_benchmark.py
+analyze_categories.py
+analyze_multirun.py
+measure_metrics.py
+benchmark_queries.json
+benchmark_queries_100.json
+benchmark_results.json
+benchmark_results_100.json
+benchmark_results_100_metrics.json
+benchmark_report.md
+benchmark_report_100.md
+benchmark_summary.md
+benchmark_runs/
+_check_bench.py
+_check_db.py
+test_location_resolver.py

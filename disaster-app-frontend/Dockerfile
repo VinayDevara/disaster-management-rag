@@ -7,9 +7,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: DEPS — install node_modules
 # ---------------------------------------------------------------------------
-FROM node:20-alpine AS deps
-
-RUN apk add --no-cache libc6-compat
+FROM node:20-slim AS deps
 
 WORKDIR /app
 
@@ -22,7 +20,7 @@ RUN npm ci
 # ---------------------------------------------------------------------------
 # Stage 2: BUILDER — build the Next.js production bundle
 # ---------------------------------------------------------------------------
-FROM node:20-alpine AS builder
+FROM node:20-slim AS builder
 
 WORKDIR /app
 
@@ -55,7 +53,7 @@ RUN npm run build
 # ---------------------------------------------------------------------------
 # Stage 3: RUNNER — minimal production image
 # ---------------------------------------------------------------------------
-FROM node:20-alpine AS runner
+FROM node:20-slim AS runner
 
 WORKDIR /app
 
@@ -63,8 +61,8 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
 # ── Non-root user (UID 1001 to avoid collision with backend UID 1000) ──
-RUN addgroup --system --gid 1001 nodejs \
-    && adduser --system --uid 1001 nextjs
+RUN groupadd --system --gid 1001 nodejs \
+    && useradd --system --uid 1001 --gid 1001 nextjs
 
 # Copy the standalone server, static assets, and public directory
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
@@ -82,7 +80,7 @@ ENV HOSTNAME="0.0.0.0"
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:3000/ || exit 1
+    CMD node -e "require('http').get('http://localhost:3000/', (r) => {if(r.statusCode !== 200) process.exit(1)})" || exit 1
 
 # Start the standalone Next.js server
 CMD ["node", "server.js"]
