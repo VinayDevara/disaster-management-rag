@@ -178,29 +178,41 @@ class VectorDBManager:
         ids = []
         
         for record in flight_records:
+            # Map columns cleanly
+            flight = record.get('flight') or record.get('aircraft__flight') or 'Unknown'
+            hex_code = record.get('hex') or record.get('aircraft__hex') or 'N/A'
+            alt_baro = record.get('alt_baro') or record.get('aircraft__alt_baro') or 'N/A'
+            gs = record.get('gs') or record.get('aircraft__gs') or 'N/A'
+            lat = record.get('lat') or record.get('aircraft__lat') or 'N/A'
+            lon = record.get('lon') or record.get('aircraft__lon') or 'N/A'
+            squawk = record.get('squawk') or record.get('aircraft__squawk') or 'N/A'
+            category = record.get('category') or record.get('aircraft__category') or 'N/A'
+            emergency = record.get('emergency') or record.get('aircraft__emergency') or 'none'
+            timestamp = record.get('timestamp') or record.get('now') or ''
+            
             # Create text representation
-            text = f"""Flight {record.get('flight', 'Unknown')} 
-Aircraft Hex: {record.get('hex', 'N/A')}
-Altitude: {record.get('alt_baro', 'N/A')} ft
-Ground Speed: {record.get('gs', 'N/A')} knots
-Position: {record.get('lat', 'N/A')}, {record.get('lon', 'N/A')}
-Squawk: {record.get('squawk', 'N/A')}
-Category: {record.get('category', 'N/A')}
-Emergency: {record.get('emergency', 'none')}
+            text = f"""Flight {flight} 
+Aircraft Hex: {hex_code}
+Altitude: {alt_baro} ft
+Ground Speed: {gs} knots
+Position: {lat}, {lon}
+Squawk: {squawk}
+Category: {category}
+Emergency: {emergency}
 """
             documents.append(text)
             
             # Store metadata
             metadatas.append({
-                "hex": str(record.get('hex', '')),
-                "flight": str(record.get('flight', '')),
-                "timestamp": str(record.get('timestamp', '')),
-                "lat": float(record.get('lat', 0)) if record.get('lat') else 0,
-                "lon": float(record.get('lon', 0)) if record.get('lon') else 0,
-                "emergency": str(record.get('emergency', 'none'))
+                "hex": str(hex_code),
+                "flight": str(flight),
+                "timestamp": str(timestamp),
+                "lat": float(lat) if lat != 'N/A' else 0.0,
+                "lon": float(lon) if lon != 'N/A' else 0.0,
+                "emergency": str(emergency)
             })
             
-            ids.append(f"flight_{record.get('hex', uuid.uuid4())}_{record.get('timestamp', '')}")
+            ids.append(f"flight_{hex_code}_{timestamp}")
         
         self.add_documents('flights', documents, metadatas, ids)
     

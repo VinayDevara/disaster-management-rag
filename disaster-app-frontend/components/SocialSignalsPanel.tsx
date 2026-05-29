@@ -309,7 +309,7 @@ export default function SocialSignalsPanel() {
         }
       },
       (err) => {
-        console.error('Geolocation failed or denied:', err);
+        console.warn('Geolocation permission not available or denied:', err.message || `Code: ${err.code}`);
         setDetectedRegion('india');
         setLocationStatus('Location permission denied. Showing India news.');
       },

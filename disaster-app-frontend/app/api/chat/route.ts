@@ -27,6 +27,7 @@ export async function POST(request: NextRequest) {
 const llmData = await llmResponse.json();
 const finalResponse = llmData.final_response || {};
 const response = finalResponse.unified_response || finalResponse.answer || llmData.answer || 'No response received';
+const trajectory_id = llmData.trajectory_id;
 
       // Save to chat history if sessionId provided
       if (sessionId) {
@@ -47,6 +48,7 @@ const response = finalResponse.unified_response || finalResponse.answer || llmDa
           role: 'assistant',
           content: response,
           timestamp: new Date().toISOString(),
+          trajectory_id: trajectory_id,
         });
 
         await supabase
@@ -58,7 +60,7 @@ const response = finalResponse.unified_response || finalResponse.answer || llmDa
           .eq('id', sessionId);
       }
 
-      return NextResponse.json({ response });
+      return NextResponse.json({ response, trajectory_id });
     } catch (error) {
       console.error('Error calling LLM backend:', error);
       // Fallback response if backend is unavailable

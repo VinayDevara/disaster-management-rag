@@ -1,0 +1,28 @@
+{
+  "query": "what are the updates in my current location",
+  "started_at": "2026-05-28T14:00:12.476334+00:00",
+  "max_steps": 15,
+  "steps": [
+    {
+      "step": 1,
+      "thought": "Orchestrator classified query. Type: general. Primary: none.",
+      "action": "orchestrator_decompose",
+      "action_input": {
+        "classification": {
+          "query_type": "general",
+          "primary_agent": "none",
+          "secondary_agents": [],
+          "requires_cross_intelligence": false,
+          "reasoning": "The query is vague and does not specify whether the user is asking about flights, weather, or disasters. It simply asks for updates in the current location without context.",
+          "extracted_entities": {}
+        },
+        "sub_queries": {}
+      },
+      "observation": "Decomposition complete. Passing to sub-agents."
+    }
+  ],
+  "final_answer": "Hi there! I can help with updates on active disasters, weather conditions, and more. Could you please specify your current location or the type of update you're interested in?",
+  "finished_at": "2026-05-28T14:00:16.827915+00:00",
+  "total_steps": 1,
+  "status": "completed"
+}

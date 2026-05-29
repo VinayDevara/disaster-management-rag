@@ -67,6 +67,7 @@ class TrajectoryLogger:
         """Save the trajectory to a JSON file."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"trajectory_{timestamp}.json"
+        self.filename = filename
         filepath = os.path.join(self.log_dir, filename)
         
         with open(filepath, "w") as f:

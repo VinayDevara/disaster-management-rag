@@ -28,6 +28,7 @@ import logging
 from datetime import datetime
 from colorama import Fore, Style, init
 from utils.trajectory_logger import TrajectoryLogger
+from utils.trajectory_auditor import TrajectoryAuditor
 
 # Configure basic logging
 logging.basicConfig(
@@ -132,6 +133,9 @@ class DisasterRAGSystem:
         # Save final trajectory
         final_answer = result.get("final_response", {}).get("answer") or result.get("final_response", {}).get("unified_response", "No answer generated")
         trajectory_logger.finish(final_answer=final_answer)
+        
+        # Expose the saved trajectory ID
+        result["trajectory_id"] = getattr(trajectory_logger, "filename", None)
 
         # Display summary
         meta = result.get("metadata", {})
@@ -155,7 +159,7 @@ class DisasterRAGSystem:
         self.db.load_adsb_data(excel_path)
 
         flights = self.db.execute_query(
-            "SELECT * FROM aircraft WHERE flight IS NOT NULL LIMIT 100"
+            "SELECT * FROM aircraft WHERE aircraft__flight IS NOT NULL LIMIT 100"
         )
         if flights:
             self.vector_db.add_flight_data(flights)
@@ -301,6 +305,67 @@ async def api_query(payload: dict):
     system = get_system()
     result = system.process_query(query)
     return result
+
+
+@app.post("/api/audit")
+async def api_audit(payload: dict):
+    """Audit a trajectory for logical faults and localize errors."""
+    trajectory_id = payload.get("trajectory_id")
+    method = payload.get("method", "nli")  # "nli" (DistilBERT), "llm" (Step LLM), or "full_llm" (Full Trace LLM)
+    
+    if not trajectory_id:
+        # Fallback: get the latest trajectory from logs directory
+        import glob
+        files = glob.glob("logs/trajectory_*.json")
+        if not files:
+            return {
+                "has_fault": False,
+                "faulty_step": None,
+                "explanation": "No trajectory logs found to audit.",
+                "details": []
+            }
+        latest_file = max(files, key=os.path.getctime)
+        trajectory_id = os.path.basename(latest_file)
+        
+    auditor = TrajectoryAuditor(use_nli=(method == "nli"))
+    
+    try:
+        if method == "full_llm":
+            filepath = os.path.join("logs", trajectory_id)
+            if not os.path.exists(filepath):
+                return {
+                    "error": f"Trajectory file not found: {trajectory_id}",
+                    "has_fault": False,
+                    "faulty_step": None,
+                    "details": [],
+                    "explanation": f"Trajectory file not found: {trajectory_id}"
+                }
+            with open(filepath, "r") as f:
+                data = json.load(f)
+            result = auditor.audit_full_trajectory_via_llm(data)
+        else:
+            result = auditor.audit_file(trajectory_id)
+            
+        # Save audit result as JSON
+        try:
+            audit_filename = f"audit_{method}_{trajectory_id}"
+            audit_filepath = os.path.join("logs", audit_filename)
+            with open(audit_filepath, "w") as f_out:
+                json.dump(result, f_out, indent=2)
+            logger.info(f"Successfully saved audit report JSON to {audit_filepath}")
+        except Exception as save_err:
+            logger.error(f"Failed to save audit JSON file: {save_err}")
+            
+        return result
+    except Exception as e:
+        logger.error(f"Error executing API audit: {e}")
+        return {
+            "error": f"Internal audit error: {str(e)}",
+            "has_fault": False,
+            "faulty_step": None,
+            "details": [],
+            "explanation": f"Internal audit error: {str(e)}"
+        }
 
 
 @app.get("/api/health")
